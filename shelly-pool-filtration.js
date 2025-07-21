@@ -1,6 +1,6 @@
 /*****************************************************************************
- * Pool Filtration Controller — MQTT + Relay + Home Assistant
- * Stable version — All config exposed — Shelly Plus 1 compatible
+ * Shelly Pool Filtration — MQTT + Relay + Home Assistant
+ * Shelly Plus 1 compatible
  *****************************************************************************/
 
 // ───── System constants ─────
@@ -11,13 +11,13 @@ const BASE_TOPIC       = "homeassistant";
 const STATE_TOPIC      = "pool_filtration/state";
 const CONTROL_MODE_TOPIC = "pool_filtration/control_mode/set";
 
-// ───── Configurable parameters (modifiable depuis HA) ─────
+// ───── Configurable parameters ─────
 let freezeOn    = 0.5;
 let freezeOff   = 1.0;
 let minMinutes  = 120;
 let maxMinutes  = 960;
 let noonMinutes = 825;
-let filtrationCoeff = 1.0;                    // ⇦ NOUVEAU
+let filtrationCoeff = 1.0;
 
 // ───── Runtime state ─────
 let homeAssistantIp                       = null;
@@ -110,7 +110,7 @@ registerNumberListener("pool_filtration/freeze_off/set", function (v) {
 registerNumberListener("pool_filtration/min_minutes/set",  function (v) { minMinutes  = v; }, "minMinutes");
 registerNumberListener("pool_filtration/max_minutes/set",  function (v) { maxMinutes  = v; }, "maxMinutes");
 registerNumberListener("pool_filtration/noon_minutes/set", function (v) { noonMinutes = v; }, "noonMinutes");
-registerNumberListener("pool_filtration/coeff/set",        function (v) { filtrationCoeff = v; }, "filtrationCoeff");  // ⇦ NOUVEAU
+registerNumberListener("pool_filtration/coeff/set",        function (v) { filtrationCoeff = v; }, "filtrationCoeff");
 
 // ───── Home Assistant Autodiscovery ─────
 function autodiscovery() {
@@ -145,7 +145,7 @@ function autodiscovery() {
       dev:{ids:["shelly_pool_"+mac],name:DEVICE_NAME,mf:MANUFACTURER}};
     if(icon)o.icon=icon;
     if(id==="freeze_on"||id==="freeze_off"||id==="min_minutes"||
-       id==="max_minutes"||id==="noon_minutes"||id==="coeff")   // ⇦ AJOUT
+       id==="max_minutes"||id==="noon_minutes"||id==="coeff")
        o.entity_category="config";
     publish(BASE_TOPIC+"/number/"+ENTITY_PREFIX+id+"/config",o);
   }
@@ -159,6 +159,7 @@ function autodiscovery() {
   publishSensor("filtration_duration","Duration","h","duration","mdi:timer","{{ value_json.filtrationDuration }}");
   publishSensor("filtration_reason","Reason",null,null,"mdi:comment-question-outline","{{ value_json.filtrationReason }}");
   publishSensor("last_error","Last error",null,null,"mdi:alert","{{ value_json.lastError }}");
+  publishSensor("heartbeat", "Heartbeat", null, "timestamp", "mdi:heart-pulse", "{{ value_json.heartbeat }}");
 
   publishBinarySensor("filtration_state","Filtration state","running","mdi:pump","{{ value_json.filtrationState }}");
   publishBinarySensor("frost_protection","Frost protection","cold","mdi:snowflake","{{ value_json.frostProtection }}");
@@ -168,7 +169,7 @@ function autodiscovery() {
   publishNumber("min_minutes","Min minutes",30,1440,10,"mdi:timer-sand","{{ value_json.minMinutes }}","pool_filtration/min_minutes/set");
   publishNumber("max_minutes","Max minutes",30,1440,10,"mdi:timer-sand-full","{{ value_json.maxMinutes }}","pool_filtration/max_minutes/set");
   publishNumber("noon_minutes","Noon fallback",0,1439,1,"mdi:clock","{{ value_json.noonMinutes }}","pool_filtration/noon_minutes/set");
-  publishNumber("coeff","Filtration coeff",0.5,2,0.1,"mdi:lambda","{{ value_json.filtrationCoeff }}","pool_filtration/coeff/set"); // ⇦ NOUVEAU
+  publishNumber("coeff","Filtration coeff",0.5,2,0.1,"mdi:lambda","{{ value_json.filtrationCoeff }}","pool_filtration/coeff/set");
 
   publish(BASE_TOPIC+"/select/"+ENTITY_PREFIX+"control_mode/config", {
     name: "Control mode",
@@ -185,13 +186,27 @@ function autodiscovery() {
     },
   });
 
-  publish(BASE_TOPIC+"/switch/"+ENTITY_PREFIX+"replan/config", {
+  publish(BASE_TOPIC + "/button/" + ENTITY_PREFIX + "replan/config", {
     name: "Replanifier",
     unique_id: ENTITY_PREFIX + "replan",
     command_topic: "pool_filtration/replan/set",
+    payload_press: "ON",
+    icon: "mdi:refresh",
+    device: {
+      identifiers: ["shelly_pool_" + mac],
+      name: DEVICE_NAME,
+      manufacturer: MANUFACTURER
+    }
+  });
+
+  publish(BASE_TOPIC + "/binary_sensor/" + ENTITY_PREFIX + "alive/config", {
+    name: "Alive",
+    unique_id: ENTITY_PREFIX + "alive",
+    state_topic: "pool_filtration/alive",
     payload_on: "ON",
     payload_off: "OFF",
-    icon: "mdi:refresh",
+    device_class: "connectivity",
+    expire_after: 300,
     device: {
       identifiers: ["shelly_pool_" + mac],
       name: DEVICE_NAME,
@@ -237,7 +252,7 @@ function planFiltration() {
       minMinutes,
       Math.min(
         maxMinutes,
-        Math.floor(maximumTemperatureYesterday * 30 * filtrationCoeff)   // ⇦ AJOUT coeff
+        Math.floor(maximumTemperatureYesterday * 30 * filtrationCoeff)
       )
     );
 
@@ -302,7 +317,8 @@ function publishState() {
     lastError: lastError,
     freezeOn: freezeOn, freezeOff: freezeOff,
     minMinutes: minMinutes, maxMinutes: maxMinutes, noonMinutes: noonMinutes,
-    filtrationCoeff: filtrationCoeff                           // ⇦ NOUVEAU
+    filtrationCoeff: filtrationCoeff,
+    heartbeat: (new Date()).toISOString()
   }), 1, true);
 }
 
@@ -321,7 +337,7 @@ function loadKVS(keys, cb){
 loadKVS([
   "homeAssistantIp","homeAssistantToken","homeAssistantAirTemperatureEntityId",
   "waterSensorId","airSensorId","maximumTemperatureYesterday",
-  "freezeOn","freezeOff","minMinutes","maxMinutes","noonMinutes","filtrationCoeff"  // ⇦ AJOUT
+  "freezeOn","freezeOff","minMinutes","maxMinutes","noonMinutes","filtrationCoeff"
 ], function(v){
   if(v.homeAssistantIp)                      homeAssistantIp=v.homeAssistantIp;
   if(v.homeAssistantToken)                   homeAssistantToken=v.homeAssistantToken;
@@ -334,7 +350,7 @@ loadKVS([
   if(v.minMinutes)                           minMinutes=parseInt(v.minMinutes,10);
   if(v.maxMinutes)                           maxMinutes=parseInt(v.maxMinutes,10);
   if(v.noonMinutes)                          noonMinutes=parseInt(v.noonMinutes,10);
-  if(v.filtrationCoeff)                      filtrationCoeff=parseFloat(v.filtrationCoeff);   // ⇦ AJOUT
+  if(v.filtrationCoeff)                      filtrationCoeff=parseFloat(v.filtrationCoeff);
 
   autodiscovery(); readWater(); readAir(); planFiltration();
 });
@@ -353,3 +369,6 @@ Timer.set(60000,true,function(){
 Timer.set(60000,true,function(){
   MQTT.publish("pool_filtration/availability", "online", 1, true);
 },null);
+Timer.set(60000, true, function () {
+  MQTT.publish("pool_filtration/alive", "ON", 1, true);
+}, null);
