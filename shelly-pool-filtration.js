@@ -11,6 +11,14 @@ const BASE_TOPIC         = "homeassistant";
 const STATE_TOPIC        = "pool_filtration/state";
 const CONTROL_MODE_TOPIC = "pool_filtration/control_mode/set";
 
+// ───── Magic numbers as constants ─────
+const MINUTES_PER_DAY                = 1440;
+const TEMPERATURE_TO_MINUTES_FACTOR  = 30;
+const WATER_READ_INTERVAL            = 5;      // minutes
+const MAIN_LOOP_INTERVAL             = 60000; // milliseconds
+const HTTP_TIMEOUT                    = 5;      // seconds
+const MIN_MINUTES_LIMIT               = 30;     // minimum value for minMinutes/maxMinutes
+
 // ───── Configurable parameters (can be changed via MQTT) ─────
 let freezeOn        = 0.5;
 let freezeOff       = 1.0;
@@ -45,7 +53,7 @@ let lastError        = null;
 // ───── Utility functions ─────
 function minutesToHHMM(minutes) {
   if (minutes === null) return "--:--";
-  let total = ((minutes % 1440) + 1440) % 1440;
+  let total = ((minutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   let h = Math.floor(total / 60);
   let m = total % 60;
   return ("0" + h).slice(-2) + ":" + ("0" + m).slice(-2);
@@ -71,7 +79,7 @@ function haGET(path, cb) {
     method : "GET",
     url    : "http://" + homeAssistantIp + ":8123/api/" + path,
     headers: { Authorization: "Bearer " + homeAssistantToken },
-    timeout: 5
+    timeout: HTTP_TIMEOUT
   }, function (res, err) {
     if (err === 0) {
       lastError = null;
@@ -129,13 +137,13 @@ registerNumberListener("pool_filtration/freeze_off/set", function (v) {
 registerNumberListener("pool_filtration/min_minutes/set", function (v) {
   minMinutes = v;
 }, "minMinutes", function (v) {
-  return v >= 30 && v <= 1440 && v <= maxMinutes;
+  return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY && v <= maxMinutes;
 });
 
 registerNumberListener("pool_filtration/max_minutes/set", function (v) {
   maxMinutes = v;
 }, "maxMinutes", function (v) {
-  return v >= 30 && v <= 1440 && v >= minMinutes;
+  return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY && v >= minMinutes;
 });
 
 registerNumberListener("pool_filtration/noon_minutes/set", function (v) {
@@ -231,9 +239,9 @@ function autodiscovery() {
   // Number inputs
   enqueueNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "pool_filtration/freeze_on/set");
   enqueueNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "pool_filtration/freeze_off/set");
-  enqueueNumber("min_minutes", "Min minutes", 30, 1440, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "pool_filtration/min_minutes/set");
-  enqueueNumber("max_minutes", "Max minutes", 30, 1440, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "pool_filtration/max_minutes/set");
-  enqueueNumber("noon_minutes", "Noon fallback", 0, 1439, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "pool_filtration/noon_minutes/set");
+  enqueueNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "pool_filtration/min_minutes/set");
+  enqueueNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "pool_filtration/max_minutes/set");
+  enqueueNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "pool_filtration/noon_minutes/set");
   enqueueNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "pool_filtration/coeff/set");
 
   // Control mode selector
@@ -345,7 +353,7 @@ function planFiltration() {
       minMinutes,
       Math.min(
         maxMinutes,
-        Math.floor(tempForCalculation * 30 * filtrationCoeff)
+        Math.floor(tempForCalculation * TEMPERATURE_TO_MINUTES_FACTOR * filtrationCoeff)
       )
     );
 
@@ -354,8 +362,8 @@ function planFiltration() {
       filtrationDuration = minMinutes;
     }
 
-    filtrationStartTime = (localNoon - Math.floor(filtrationDuration / 2) + 1440) % 1440;
-    filtrationStopTime  = (filtrationStartTime + filtrationDuration) % 1440;
+    filtrationStartTime = (localNoon - Math.floor(filtrationDuration / 2) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+    filtrationStopTime  = (filtrationStartTime + filtrationDuration) % MINUTES_PER_DAY;
 
     if (isNaN(filtrationStartTime) || isNaN(filtrationStopTime)) {
       lastError = "Invalid filtration times calculated";
@@ -441,11 +449,19 @@ function mqttConnected() {
   return st && st.connected;
 }
 
-function runAutodiscoveryWhenReady() {
+function runAutodiscoveryWhenReady(attemptCount) {
+  if (attemptCount === undefined) attemptCount = 0;
+  
   if (mqttConnected()) {
     autodiscovery();
   } else {
-    Timer.set(2000, false, runAutodiscoveryWhenReady);
+    if (attemptCount < 30) {
+      Timer.set(2000, false, function () {
+        runAutodiscoveryWhenReady(attemptCount + 1);
+      });
+    } else {
+      lastError = "MQTT autodiscovery failed: MQTT not connected after 30 attempts";
+    }
   }
 }
 
@@ -499,12 +515,12 @@ loadKVS([
 // ───── Main loop (1-minute interval, only one active timer) ─────
 let loopCount = 0;
 
-Timer.set(60000, true, function () {
+Timer.set(MAIN_LOOP_INTERVAL, true, function () {
   let now = new Date();
   loopCount++;
 
-  // Every 5 minutes
-  if (loopCount % 5 === 0) {
+  // Every WATER_READ_INTERVAL minutes
+  if (loopCount % WATER_READ_INTERVAL === 0) {
     readWater();
     readAir();
   }
@@ -520,6 +536,11 @@ Timer.set(60000, true, function () {
     if (maximumWaterTemperatureToday !== null) {
       maximumTemperatureYesterday = maximumWaterTemperatureToday;
       Shelly.call("KVS.Set", { key: "maximumTemperatureYesterday", value: String(maximumWaterTemperatureToday) });
+    } else if (maximumTemperatureYesterday === null) {
+      // Fallback: use current water temperature or default to 15°C
+      let fallbackTemp = waterTemperature !== null ? waterTemperature : 15;
+      maximumTemperatureYesterday = fallbackTemp;
+      Shelly.call("KVS.Set", { key: "maximumTemperatureYesterday", value: String(fallbackTemp) });
     }
     maximumWaterTemperatureToday = waterTemperature !== null ? waterTemperature : maximumWaterTemperatureToday;
     planFiltration();
