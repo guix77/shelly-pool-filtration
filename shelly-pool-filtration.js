@@ -20,6 +20,7 @@ const WATER_READ_INTERVAL            = 5;      // minutes
 const MAIN_LOOP_INTERVAL             = 60000; // milliseconds
 const HTTP_TIMEOUT                    = 5;      // seconds
 const MIN_MINUTES_LIMIT               = 30;     // minimum value for minMinutes/maxMinutes
+const SENSOR_FAILURE_TIMEOUT          = 600000; // 10 minutes in milliseconds
 
 // ───── Configurable parameters (can be changed via MQTT) ─────
 let freezeOn        = 0.5;
@@ -40,6 +41,7 @@ let waterTemperature            = null;
 let airTemperature              = null;
 let maximumTemperatureYesterday = null;
 let maximumWaterTemperatureToday = null;
+let lastWaterTemperatureReadTime = null;
 
 let filtrationStartTime = null;
 let filtrationStopTime  = null;
@@ -110,7 +112,8 @@ function haGET(path, cb) {
       // Error -1: Request cancelled (ignored, can happen during shutdown)
       // Error 408: Request timeout (ignored, network may be temporarily unavailable)
       if (err !== -1 && err !== 408) {
-        lastError = "HA request error: " + path + " (code " + err + ")";
+        lastError = "HA request error: " + path + " (code " + err + ", IP: " + 
+                    (homeAssistantIp || "not set") + ")";
       }
       cb(null);
     }
@@ -349,6 +352,7 @@ function readWater() {
   waterTemperature = (res && typeof res.tC === "number") ? res.tC : null;
 
   if (waterTemperature !== null) {
+    lastWaterTemperatureReadTime = Date.now();
     if (maximumWaterTemperatureToday === null || waterTemperature > maximumWaterTemperatureToday) {
       maximumWaterTemperatureToday = waterTemperature;
     }
@@ -371,7 +375,8 @@ function readAir() {
       airTemperature = !isNaN(t) ? t : null;
     } catch (err) {
       airTemperature = null;
-      lastError = "Air temperature read error: " + err.message;
+      lastError = "Air temperature read error: " + err.message + 
+                  " (entity: " + (homeAssistantAirTemperatureEntityId || "not set") + ")";
     }
   });
 }
@@ -407,7 +412,8 @@ function planFiltration() {
     );
 
     if (isNaN(filtrationDuration) || filtrationDuration < 0) {
-      lastError = "Invalid filtration duration calculated";
+      lastError = "Invalid filtration duration calculated (temp: " + tempForCalculation + 
+                  "°C, coeff: " + filtrationCoeff + ", result: " + filtrationDuration + ")";
       filtrationDuration = minMinutes;
     }
 
@@ -415,7 +421,9 @@ function planFiltration() {
     filtrationStopTime  = (filtrationStartTime + filtrationDuration) % MINUTES_PER_DAY;
 
     if (isNaN(filtrationStartTime) || isNaN(filtrationStopTime)) {
-      lastError = "Invalid filtration times calculated";
+      lastError = "Invalid filtration times calculated (start: " + filtrationStartTime + 
+                  ", stop: " + filtrationStopTime + ", duration: " + filtrationDuration + 
+                  ", noon: " + localNoon + ")";
       filtrationStartTime = null;
       filtrationStopTime = null;
       return;
@@ -438,7 +446,8 @@ function updateFiltrationState() {
   let minutesNow = now.getHours() * 60 + now.getMinutes();
 
   if (filtrationStartTime === null || filtrationStopTime === null) {
-    lastError = "Missing schedule";
+    lastError = "Missing schedule (start: " + (filtrationStartTime === null ? "null" : minutesToHHMM(filtrationStartTime)) + 
+                ", stop: " + (filtrationStopTime === null ? "null" : minutesToHHMM(filtrationStopTime)) + ")";
     planFiltration();
     return;
   }
@@ -452,18 +461,44 @@ function updateFiltrationState() {
     filtrationReason = "manual";
     frostProtection = false;
   } else {
-    if (!frostProtection && waterTemperature !== null && waterTemperature <= freezeOn) frostProtection = true;
-    if (frostProtection && waterTemperature !== null && waterTemperature >= freezeOff) frostProtection = false;
+    // Check for sensor failure (no reading for more than 10 minutes)
+    let sensorFailed = lastWaterTemperatureReadTime !== null && 
+                       (Date.now() - lastWaterTemperatureReadTime) > SENSOR_FAILURE_TIMEOUT;
+
+    // Degraded mode: if sensor failed and air temperature is low, activate frost protection as precaution
+    if (sensorFailed && airTemperature !== null && airTemperature < freezeOn) {
+      frostProtection = true;
+      lastError = "Sensor failure detected: frost protection activated as precaution (air temp: " + airTemperature + "°C)";
+    }
+
+    // Normal frost protection logic (only if sensor is working)
+    if (!sensorFailed) {
+      if (!frostProtection && waterTemperature !== null && waterTemperature <= freezeOn) frostProtection = true;
+      if (frostProtection && waterTemperature !== null && waterTemperature >= freezeOff) frostProtection = false;
+    }
 
     if (frostProtection) {
       filtrationState = true;
       filtrationReason = "frost";
-    } else if (minutesNow >= filtrationStartTime && minutesNow < filtrationStopTime) {
-      filtrationState = true;
-      filtrationReason = "schedule";
     } else {
-      filtrationState = false;
-      filtrationReason = "off";
+      // Check if we're in the scheduled time window
+      // Handle case where schedule crosses midnight (startTime > stopTime)
+      let inSchedule = false;
+      if (filtrationStartTime < filtrationStopTime) {
+        // Normal case: no midnight crossing
+        inSchedule = minutesNow >= filtrationStartTime && minutesNow < filtrationStopTime;
+      } else {
+        // Midnight crossing: startTime > stopTime (e.g., 23:00 to 02:00)
+        inSchedule = minutesNow >= filtrationStartTime || minutesNow < filtrationStopTime;
+      }
+
+      if (inSchedule) {
+        filtrationState = true;
+        filtrationReason = "schedule";
+      } else {
+        filtrationState = false;
+        filtrationReason = "off";
+      }
     }
   }
 
@@ -549,6 +584,35 @@ function loadKVS(keys, cb) {
   })();
 }
 
+// ───── Parameter validation ─────
+/**
+ * Validates and auto-corrects parameter inconsistencies
+ * Swaps minMinutes/maxMinutes if inverted, adjusts freezeOff if <= freezeOn
+ * Sets lastError if corrections were made
+ */
+function validateParameters() {
+  let errors = [];
+  
+  if (minMinutes > maxMinutes) {
+    let temp = minMinutes;
+    minMinutes = maxMinutes;
+    maxMinutes = temp;
+    errors.push("minMinutes > maxMinutes: values swapped");
+    Shelly.call("KVS.Set", { key: "minMinutes", value: String(minMinutes) });
+    Shelly.call("KVS.Set", { key: "maxMinutes", value: String(maxMinutes) });
+  }
+  
+  if (freezeOn >= freezeOff) {
+    freezeOff = freezeOn + 0.5;
+    errors.push("freezeOn >= freezeOff: freezeOff adjusted to " + freezeOff);
+    Shelly.call("KVS.Set", { key: "freezeOff", value: String(freezeOff) });
+  }
+  
+  if (errors.length > 0) {
+    lastError = "Parameter validation error: " + errors.join(", ");
+  }
+}
+
 // ───── Initialization ─────
 loadKVS([
   "homeAssistantIp", "homeAssistantToken", "homeAssistantAirTemperatureEntityId",
@@ -567,6 +631,9 @@ loadKVS([
   if (v.maxMinutes) maxMinutes = parseInt(v.maxMinutes, 10);
   if (v.noonMinutes) noonMinutes = parseInt(v.noonMinutes, 10);
   if (v.filtrationCoeff) filtrationCoeff = parseFloat(v.filtrationCoeff);
+
+  // Validate and auto-correct parameters
+  validateParameters();
 
   runAutodiscoveryWhenReady();
   readWater();
@@ -616,5 +683,17 @@ Timer.set(MAIN_LOOP_INTERVAL, true, function () {
     }
     maximumWaterTemperatureToday = waterTemperature !== null ? waterTemperature : maximumWaterTemperatureToday;
     planFiltration();
+    
+    // Verify replan succeeded after a short delay (planFiltration is async)
+    Timer.set(5000, false, function () {
+      if (filtrationStartTime === null || filtrationStopTime === null) {
+        lastError = "Daily replan failed: schedule not set, retrying with defaults";
+        // Retry with default temperature if available
+        if (maximumTemperatureYesterday === null) {
+          maximumTemperatureYesterday = waterTemperature !== null ? waterTemperature : 15;
+        }
+        planFiltration();
+      }
+    });
   }
 });
