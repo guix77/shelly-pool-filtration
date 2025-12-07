@@ -1,9 +1,11 @@
 /*****************************************************************************
  * Pool Filtration Controller — MQTT + Relay + Home Assistant
  * Stable version — Single timer loop — Shelly Plus 1 compatible
+ * Version: 1.0.0
  *****************************************************************************/
 
 // ───── System constants ─────
+const VERSION            = "1.0.0";
 const DEVICE_NAME        = "Pool filtration";
 const MANUFACTURER       = "Shelly";
 const ENTITY_PREFIX      = "pool_filtration";
@@ -51,6 +53,11 @@ let filtrationReason = "off";
 let lastError        = null;
 
 // ───── Utility functions ─────
+/**
+ * Converts minutes (0-1439) to HH:MM format
+ * @param {number|null} minutes - Minutes since midnight (0-1439) or null
+ * @returns {string} Time in HH:MM format or "--:--" if null
+ */
 function minutesToHHMM(minutes) {
   if (minutes === null) return "--:--";
   let total = ((minutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
@@ -59,15 +66,30 @@ function minutesToHHMM(minutes) {
   return ("0" + h).slice(-2) + ":" + ("0" + m).slice(-2);
 }
 
+/**
+ * Converts minutes to hours with one decimal place
+ * @param {number|null} minutes - Duration in minutes
+ * @returns {number|null} Duration in hours (rounded to 1 decimal) or null
+ */
 function toHours(minutes) {
   return minutes !== null ? Math.round((minutes / 60) * 10) / 10 : null;
 }
 
+/**
+ * Sanitizes MAC address by replacing colons with underscores
+ * @param {string} mac - MAC address in format "XX:XX:XX:XX:XX:XX"
+ * @returns {string} Sanitized MAC address
+ */
 function sanitizeMAC(mac) {
   return mac.split(":").join("_");
 }
 
 // ───── Home Assistant HTTP helper ─────
+/**
+ * Makes an HTTP GET request to Home Assistant API
+ * @param {string} path - API path (e.g., "states/sun.sun")
+ * @param {function} cb - Callback function receiving response body or null on error
+ */
 function haGET(path, cb) {
   if (!homeAssistantIp || !homeAssistantToken) {
     lastError = "Home Assistant not configured (missing IP or token)";
@@ -96,6 +118,13 @@ function haGET(path, cb) {
 }
 
 // ───── MQTT input handlers ─────
+/**
+ * Registers an MQTT listener for numeric values with validation
+ * @param {string} topic - MQTT topic to subscribe to
+ * @param {function} setter - Function to call with validated value
+ * @param {string} kvsKey - KVS key to persist the value
+ * @param {function|null} validator - Optional validation function returning boolean
+ */
 function registerNumberListener(topic, setter, kvsKey, validator) {
   MQTT.subscribe(topic, function (msg) {
     let v = parseFloat(msg);
@@ -159,6 +188,11 @@ registerNumberListener("pool_filtration/coeff/set", function (v) {
 });
 
 // ───── Autodiscovery for Home Assistant ─────
+/**
+ * Publishes Home Assistant autodiscovery configuration for all entities
+ * Creates sensors, binary sensors, numbers, select, and button entities
+ * Publishes one entity per second to avoid MQTT overload
+ */
 function autodiscovery() {
   let mac = sanitizeMAC(Shelly.getDeviceInfo().mac);
   let queue = [];
@@ -306,6 +340,10 @@ function autodiscovery() {
 }
 
 // ───── Sensor reading ─────
+/**
+ * Reads water temperature from the Shelly temperature sensor
+ * Updates waterTemperature and tracks maximumWaterTemperatureToday
+ */
 function readWater() {
   let res = Shelly.getComponentStatus("temperature", waterSensorId);
   waterTemperature = (res && typeof res.tC === "number") ? res.tC : null;
@@ -317,6 +355,11 @@ function readWater() {
   }
 }
 
+/**
+ * Reads air temperature from Home Assistant
+ * Returns early if homeAssistantAirTemperatureEntityId is not configured
+ * Updates airTemperature global variable
+ */
 function readAir() {
   if (!homeAssistantAirTemperatureEntityId) {
     airTemperature = null;
@@ -334,6 +377,12 @@ function readAir() {
 }
 
 // ───── Filtration planning ─────
+/**
+ * Calculates and sets the daily filtration schedule
+ * Uses maximumTemperatureYesterday (or fallback) to determine duration
+ * Centers the schedule around solar noon
+ * Updates filtrationStartTime, filtrationStopTime, and filtrationDuration
+ */
 function planFiltration() {
   let localNoon = noonMinutes;
   haGET("states/sun.sun", function (body) {
@@ -379,6 +428,11 @@ function planFiltration() {
 }
 
 // ───── Filtration logic ─────
+/**
+ * Updates filtration state based on control mode, frost protection, and schedule
+ * Priority: manual mode > frost protection > schedule
+ * Controls the relay switch and publishes state
+ */
 function updateFiltrationState() {
   let now = new Date();
   let minutesNow = now.getHours() * 60 + now.getMinutes();
@@ -418,6 +472,10 @@ function updateFiltrationState() {
 }
 
 // ───── MQTT state publication ─────
+/**
+ * Publishes current system state to MQTT
+ * Includes all temperatures, schedule, filtration state, and configuration
+ */
 function publishState() {
   MQTT.publish(STATE_TOPIC, JSON.stringify({
     waterTemperature: waterTemperature,
@@ -444,11 +502,20 @@ function publishState() {
 }
 
 // ───── MQTT connection check ─────
+/**
+ * Checks if MQTT is connected
+ * @returns {boolean} True if MQTT is connected, false otherwise
+ */
 function mqttConnected() {
   let st = Shelly.getComponentStatus("mqtt");
   return st && st.connected;
 }
 
+/**
+ * Runs Home Assistant autodiscovery when MQTT is ready
+ * Retries up to 30 times (1 minute total) if MQTT is not connected
+ * @param {number} attemptCount - Current attempt number (default: 0)
+ */
 function runAutodiscoveryWhenReady(attemptCount) {
   if (attemptCount === undefined) attemptCount = 0;
   
@@ -466,6 +533,11 @@ function runAutodiscoveryWhenReady(attemptCount) {
 }
 
 // ───── Load configuration from KVS ─────
+/**
+ * Loads multiple keys from KVS asynchronously
+ * @param {string[]} keys - Array of KVS keys to load
+ * @param {function} cb - Callback function receiving object with key-value pairs
+ */
 function loadKVS(keys, cb) {
   let res = {}, idx = 0;
   (function next() {
