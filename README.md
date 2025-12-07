@@ -1,216 +1,216 @@
-# Contrôleur de Filtration de Piscine pour Shelly Plus 1
+# Pool Filtration Controller for Shelly Plus 1
 
-Contrôleur intelligent de filtration de piscine utilisant MQTT et Home Assistant, conçu pour fonctionner sur un appareil Shelly Plus 1. Le système gère automatiquement la filtration en fonction de la température de l'eau, avec protection antigel intégrée et adaptation automatique pour l'hivernage actif.
+Intelligent pool filtration controller using MQTT and Home Assistant, designed to run on a Shelly Plus 1 device. The system automatically manages filtration based on water temperature, with integrated frost protection and automatic adaptation for active winterization.
 
-## Table des matières
+## Table of Contents
 
-- [Prérequis](#prérequis)
+- [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Fonctionnement de la gestion de la piscine](#fonctionnement-de-la-gestion-de-la-piscine)
-  - [Hivernage actif et protection antigel](#hivernage-actif-et-protection-antigel)
-- [Topics MQTT](#topics-mqtt)
-- [Entités Home Assistant](#entités-home-assistant)
-- [Dépannage](#dépannage)
+- [Pool Management Operation](#pool-management-operation)
+  - [Active Winterization and Frost Protection](#active-winterization-and-frost-protection)
+- [MQTT Topics](#mqtt-topics)
+- [Home Assistant Entities](#home-assistant-entities)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## Prérequis
+## Prerequisites
 
-- **Appareil Shelly Plus 1** avec firmware supportant les scripts
-- **Broker MQTT** configuré et accessible
-- **Home Assistant** avec API REST activée
-- **Capteur de température** connecté au Shelly Plus 1 (pour la température de l'eau)
-- **Entité de température d'air** dans Home Assistant (optionnelle mais recommandée)
+- **Shelly Plus 1 device** with firmware supporting scripts
+- **MQTT broker** configured and accessible
+- **Home Assistant** with REST API enabled
+- **Temperature sensor** connected to the Shelly Plus 1 (for water temperature)
+- **Air temperature entity** in Home Assistant (optional but recommended)
 
 ---
 
 ## Installation
 
-1. **Configurer MQTT sur le Shelly Plus 1**
-   - Accédez à l'interface web du Shelly
-   - Allez dans **Settings → MQTT**
-   - Configurez votre broker MQTT avec les identifiants appropriés
+1. **Configure MQTT on Shelly Plus 1**
+   - Access the Shelly web interface
+   - Go to **Settings → MQTT**
+   - Configure your MQTT broker with appropriate credentials
 
-2. **Configurer Home Assistant**
-   - Assurez-vous que l'API REST est activée
-   - Créez un token d'accès long terme dans Home Assistant
-   - Notez l'adresse IP de votre instance Home Assistant
+2. **Configure Home Assistant**
+   - Ensure the REST API is enabled
+   - Create a long-lived access token in Home Assistant
+   - Note the IP address of your Home Assistant instance
 
-3. **Uploader le script**
-   - Copiez le contenu de `shelly-pool-filtration.js`
-   - Dans l'interface web du Shelly, allez dans **Scripts**
-   - Créez un nouveau script et collez le code
-   - Activez le script
+3. **Upload the script**
+   - Copy the contents of `shelly-pool-filtration.js`
+   - In the Shelly web interface, go to **Scripts**
+   - Create a new script and paste the code
+   - Enable the script
 
-4. **Configuration initiale via KVS**
-   - Utilisez l'API Shelly ou l'interface web pour configurer les clés KVS suivantes :
-     - `homeAssistantIp` : Adresse IP de Home Assistant
-     - `homeAssistantToken` : Token d'accès Home Assistant
-     - `homeAssistantAirTemperatureEntityId` : ID de l'entité de température d'air (ex: `sensor.temperature_exterieure`)
-     - `waterSensorId` : ID du capteur de température d'eau (défaut: 0)
-     - `airSensorId` : ID du capteur de température d'air (défaut: 1)
+4. **Initial configuration via KVS**
+   - Use the Shelly API or web interface to configure the following KVS keys:
+     - `homeAssistantIp` : Home Assistant IP address
+     - `homeAssistantToken` : Home Assistant access token
+     - `homeAssistantAirTemperatureEntityId` : Air temperature entity ID (e.g., `sensor.temperature_exterieure`)
+     - `waterSensorId` : Water temperature sensor ID (default: 0)
+     - `airSensorId` : Air temperature sensor ID (default: 1)
 
 ---
 
 ## Configuration
 
-### Paramètres configurables via MQTT
+### Configurable parameters via MQTT
 
-Tous les paramètres peuvent être modifiés via MQTT et sont persistés dans le KVS :
+All parameters can be modified via MQTT and are persisted in KVS:
 
-| Paramètre | Topic MQTT | Défaut | Description |
-|-----------|------------|--------|-------------|
-| `freezeOn` | `pool_filtration/freeze_on/set` | 0.5°C | Température d'activation de l'antigel |
-| `freezeOff` | `pool_filtration/freeze_off/set` | 1.0°C | Température de désactivation de l'antigel |
-| `minMinutes` | `pool_filtration/min_minutes/set` | 120 min | Durée minimale de filtration quotidienne |
-| `maxMinutes` | `pool_filtration/max_minutes/set` | 960 min | Durée maximale de filtration quotidienne |
-| `noonMinutes` | `pool_filtration/noon_minutes/set` | 825 min | Heure de midi de repli (13h45) |
-| `filtrationCoeff` | `pool_filtration/coeff/set` | 1.0 | Coefficient multiplicateur de la durée de filtration |
+| Parameter | MQTT Topic | Default | Description |
+|-----------|------------|---------|-------------|
+| `freezeOn` | `pool_filtration/freeze_on/set` | 0.5°C | Frost protection activation threshold |
+| `freezeOff` | `pool_filtration/freeze_off/set` | 1.0°C | Frost protection deactivation threshold |
+| `minMinutes` | `pool_filtration/min_minutes/set` | 120 min | Minimum daily filtration duration |
+| `maxMinutes` | `pool_filtration/max_minutes/set` | 960 min | Maximum daily filtration duration |
+| `noonMinutes` | `pool_filtration/noon_minutes/set` | 825 min | Fallback noon time (13:45) |
+| `filtrationCoeff` | `pool_filtration/coeff/set` | 1.0 | Filtration duration multiplier coefficient |
 
-### Mode de contrôle
+### Control mode
 
-Le mode de contrôle peut être changé via le topic `pool_filtration/control_mode/set` :
-- `auto` : Mode automatique (planning + antigel)
-- `manual_on` : Filtration forcée ON
-- `manual_off` : Filtration forcée OFF
+The control mode can be changed via the `pool_filtration/control_mode/set` topic:
+- `auto` : Automatic mode (scheduling + frost protection)
+- `manual_on` : Forced filtration ON
+- `manual_off` : Forced filtration OFF
 
 ---
 
-## Fonctionnement de la gestion de la piscine
+## Pool Management Operation
 
-Le script gère la filtration de la piscine de manière intelligente et automatique en combinant plusieurs mécanismes :
+The script manages pool filtration intelligently and automatically by combining several mechanisms:
 
-### 1. Planification automatique basée sur la température
+### 1. Automatic temperature-based scheduling
 
-Le système calcule chaque jour la durée optimale de filtration en fonction de la **température maximale de l'eau de la veille**. La formule utilisée est :
+The system calculates the optimal daily filtration duration based on **yesterday's maximum water temperature**. The formula used is:
 
 ```
-Durée (minutes) = max(minMinutes, min(maxMinutes, TempératureMaxHier × 30 × filtrationCoeff))
+Duration (minutes) = max(minMinutes, min(maxMinutes, MaxTempYesterday × 30 × filtrationCoeff))
 ```
 
-**Exemple :** Si la température maximale d'hier était de 25°C avec un coefficient de 1.0 :
-- Calcul : 25 × 30 × 1.0 = 750 minutes (12h30)
-- Si minMinutes = 120 et maxMinutes = 960, la durée sera de 750 minutes
+**Example:** If yesterday's maximum temperature was 25°C with a coefficient of 1.0:
+- Calculation: 25 × 30 × 1.0 = 750 minutes (12h30)
+- If minMinutes = 120 and maxMinutes = 960, the duration will be 750 minutes
 
-### 2. Centrage autour du midi solaire
+### 2. Centering around solar noon
 
-La période de filtration est **centrée autour du midi solaire** (calculé automatiquement via Home Assistant ou utilise l'heure configurée en repli). Cela garantit que la filtration se produit pendant les heures les plus chaudes de la journée, optimisant l'efficacité du traitement de l'eau.
+The filtration period is **centered around solar noon** (calculated automatically via Home Assistant or uses the configured fallback time). This ensures that filtration occurs during the warmest hours of the day, optimizing water treatment efficiency.
 
-**Exemple :** Si le midi solaire est à 13h00 et que la durée calculée est de 6 heures :
-- Début : 13h00 - 3h = 10h00
-- Fin : 13h00 + 3h = 16h00
+**Example:** If solar noon is at 1:00 PM and the calculated duration is 6 hours:
+- Start: 1:00 PM - 3h = 10:00 AM
+- End: 1:00 PM + 3h = 4:00 PM
 
-### 3. Mise à jour quotidienne
+### 3. Daily update
 
-Chaque jour à **01h00**, le système :
-1. Enregistre la température maximale de la veille
-2. Réinitialise le compteur de température maximale du jour
-3. Recalcule le planning de filtration pour la nouvelle journée
+Every day at **01:00**, the system:
+1. Records yesterday's maximum temperature
+2. Resets the day's maximum temperature counter
+3. Recalculates the filtration schedule for the new day
 
-### 4. Lecture des températures
+### 4. Temperature readings
 
-- **Température de l'eau** : Lue toutes les 5 minutes depuis le capteur connecté au Shelly
-- **Température de l'air** : Lue toutes les 5 minutes depuis Home Assistant (pour information uniquement)
-- **Suivi des maximums** : Le système suit automatiquement la température maximale quotidienne
+- **Water temperature** : Read every 5 minutes from the sensor connected to the Shelly
+- **Air temperature** : Read every 5 minutes from Home Assistant (for information only)
+- **Maximum tracking** : The system automatically tracks the daily maximum temperature
 
-### 5. Priorités de contrôle
+### 5. Control priorities
 
-Le système applique les priorités suivantes (du plus prioritaire au moins prioritaire) :
+The system applies the following priorities (from most to least priority):
 
-1. **Mode manuel** : Si `controlMode` est `manual_on` ou `manual_off`, le mode manuel a la priorité absolue
-2. **Protection antigel** : Si activée, elle prend le dessus sur le planning normal
-3. **Planning automatique** : Filtration selon le planning calculé
+1. **Manual mode** : If `controlMode` is `manual_on` or `manual_off`, manual mode has absolute priority
+2. **Frost protection** : If activated, it overrides normal scheduling
+3. **Automatic scheduling** : Filtration according to calculated schedule
 
-### 6. Replanification manuelle
+### 6. Manual replanning
 
-Il est possible de forcer un recalcul du planning à tout moment en envoyant `ON` au topic `pool_filtration/replan/set`. Cela est utile après un changement de paramètres ou pour tester la configuration.
-
----
-
-## Hivernage actif et protection antigel
-
-### Principe de l'hivernage actif
-
-En **hivernage actif**, la piscine reste remplie et fonctionnelle, mais avec des équipements réduits :
-- ✅ **Filtration** : Maintenue (gérée par ce script)
-- ❌ **Électrolyse** : Coupée
-- ❌ **Contrôle de pH automatique** : Coupé
-- ✅ **Traitement chimique** : Galets de chlore lent dans les skimmers
-
-Le script s'adapte **automatiquement** à cette configuration sans nécessiter de changement de paramètres.
-
-### Fonctionnement de la protection antigel
-
-La protection antigel est un mécanisme **prioritaire** qui protège la piscine contre le gel en maintenant l'eau en circulation lorsque la température approche du point de congélation.
-
-#### Seuils de température
-
-Le système utilise deux seuils avec **hystérésis** pour éviter les basculements fréquents :
-
-- **`freezeOn`** (défaut : 0.5°C) : Seuil d'**activation** de l'antigel
-  - Quand la température de l'eau descend à 0.5°C ou en dessous, l'antigel s'active
-  - La filtration est **forcée ON** immédiatement, indépendamment du planning
-
-- **`freezeOff`** (défaut : 1.0°C) : Seuil de **désactivation** de l'antigel
-  - Quand la température remonte à 1.0°C ou au-dessus, l'antigel se désactive
-  - La filtration reprend son fonctionnement normal selon le planning
-
-#### Pourquoi une hystérésis ?
-
-L'écart de 0.5°C entre `freezeOn` et `freezeOff` évite que la pompe ne s'allume et s'éteigne en permanence lorsque la température oscille autour de 0°C. Cela protège également l'équipement contre les cycles trop fréquents.
-
-#### Comportement en hivernage actif
-
-Pendant l'hivernage actif, plusieurs phénomènes se produisent simultanément :
-
-1. **Températures plus basses** : La température maximale quotidienne est généralement plus basse (ex: 8-15°C au lieu de 25-30°C)
-
-2. **Durée de filtration réduite automatiquement** :
-   - Exemple avec température max de 10°C : 10 × 30 × 1.0 = 300 minutes (5h)
-   - Le système réduit naturellement la durée de filtration sans intervention
-
-3. **Activation fréquente de l'antigel** :
-   - Les nuits froides peuvent déclencher l'antigel
-   - La pompe tourne en continu jusqu'à ce que la température remonte
-   - Cela protège les canalisations et l'équipement contre le gel
-
-4. **Planning toujours actif** :
-   - Même en hiver, le planning continue de fonctionner
-   - La filtration se fait pendant les heures les plus chaudes (autour du midi)
-   - L'antigel prend le relais la nuit si nécessaire
-
-#### Exemple concret en hivernage actif
-
-**Scénario :** Température maximale d'hier = 12°C, nuit à -2°C
-
-**Journée type :**
-- **01h00** : Recalcul du planning → Durée = 12 × 30 = 360 minutes (6h)
-- **02h00** : Température eau = 0.3°C → **Antigel activé** → Filtration ON
-- **08h00** : Température eau = 1.2°C → Antigel désactivé → Retour au planning
-- **10h00** : Début du planning (centré sur midi) → Filtration ON
-- **16h00** : Fin du planning → Filtration OFF
-- **23h00** : Température eau = 0.4°C → **Antigel activé** → Filtration ON
-
-**Résultat :** La piscine est protégée contre le gel la nuit, et la filtration quotidienne continue de fonctionner pour maintenir l'eau propre.
-
-### Ajustement des paramètres pour l'hivernage
-
-Bien que le système s'adapte automatiquement, vous pouvez ajuster les paramètres pour optimiser l'hivernage :
-
-- **Réduire `minMinutes`** : Si vous voulez moins de filtration en hiver (ex: 60-90 minutes)
-- **Ajuster `freezeOn` et `freezeOff`** : Selon votre climat local
-  - Climat doux : `freezeOn = 1.0°C`, `freezeOff = 2.0°C`
-  - Climat froid : `freezeOn = 0.0°C`, `freezeOff = 1.0°C`
-- **Réduire `filtrationCoeff`** : Pour diminuer la durée de filtration (ex: 0.7-0.8)
+It is possible to force a schedule recalculation at any time by sending `ON` to the `pool_filtration/replan/set` topic. This is useful after changing parameters or to test the configuration.
 
 ---
 
-## Topics MQTT
+## Active Winterization and Frost Protection
 
-### Publication (état)
+### Active winterization principle
 
-- **`pool_filtration/state`** : État complet du système (JSON)
+In **active winterization**, the pool remains filled and functional, but with reduced equipment:
+- ✅ **Filtration** : Maintained (managed by this script)
+- ❌ **Electrolysis** : Disabled
+- ❌ **Automatic pH control** : Disabled
+- ✅ **Chemical treatment** : Slow-release chlorine tablets in skimmers
+
+The script **automatically** adapts to this configuration without requiring parameter changes.
+
+### Frost protection operation
+
+Frost protection is a **priority** mechanism that protects the pool against freezing by keeping water circulating when temperature approaches the freezing point.
+
+#### Temperature thresholds
+
+The system uses two thresholds with **hysteresis** to avoid frequent toggling:
+
+- **`freezeOn`** (default: 0.5°C) : Frost protection **activation** threshold
+  - When water temperature drops to 0.5°C or below, frost protection activates
+  - Filtration is **forced ON** immediately, regardless of schedule
+
+- **`freezeOff`** (default: 1.0°C) : Frost protection **deactivation** threshold
+  - When temperature rises to 1.0°C or above, frost protection deactivates
+  - Filtration resumes normal operation according to schedule
+
+#### Why hysteresis?
+
+The 0.5°C gap between `freezeOn` and `freezeOff` prevents the pump from constantly turning on and off when temperature oscillates around 0°C. This also protects equipment against excessive cycling.
+
+#### Behavior during active winterization
+
+During active winterization, several phenomena occur simultaneously:
+
+1. **Lower temperatures** : Daily maximum temperature is generally lower (e.g., 8-15°C instead of 25-30°C)
+
+2. **Automatically reduced filtration duration** :
+   - Example with max temperature of 10°C: 10 × 30 × 1.0 = 300 minutes (5h)
+   - The system naturally reduces filtration duration without intervention
+
+3. **Frequent frost protection activation** :
+   - Cold nights can trigger frost protection
+   - The pump runs continuously until temperature rises
+   - This protects pipes and equipment against freezing
+
+4. **Schedule always active** :
+   - Even in winter, the schedule continues to function
+   - Filtration occurs during the warmest hours (around noon)
+   - Frost protection takes over at night if necessary
+
+#### Concrete example during active winterization
+
+**Scenario:** Yesterday's maximum temperature = 12°C, night at -2°C
+
+**Typical day:**
+- **01:00** : Schedule recalculation → Duration = 12 × 30 = 360 minutes (6h)
+- **02:00** : Water temperature = 0.3°C → **Frost protection activated** → Filtration ON
+- **08:00** : Water temperature = 1.2°C → Frost protection deactivated → Return to schedule
+- **10:00** : Schedule start (centered on noon) → Filtration ON
+- **16:00** : Schedule end → Filtration OFF
+- **23:00** : Water temperature = 0.4°C → **Frost protection activated** → Filtration ON
+
+**Result:** The pool is protected against freezing at night, and daily filtration continues to function to keep water clean.
+
+### Parameter adjustment for winterization
+
+Although the system adapts automatically, you can adjust parameters to optimize winterization:
+
+- **Reduce `minMinutes`** : If you want less filtration in winter (e.g., 60-90 minutes)
+- **Adjust `freezeOn` and `freezeOff`** : According to your local climate
+  - Mild climate: `freezeOn = 1.0°C`, `freezeOff = 2.0°C`
+  - Cold climate: `freezeOn = 0.0°C`, `freezeOff = 1.0°C`
+- **Reduce `filtrationCoeff`** : To decrease filtration duration (e.g., 0.7-0.8)
+
+---
+
+## MQTT Topics
+
+### Publication (state)
+
+- **`pool_filtration/state`** : Complete system state (JSON)
   ```json
   {
     "waterTemperature": 25.5,
@@ -236,106 +236,106 @@ Bien que le système s'adapte automatiquement, vous pouvez ajuster les paramètr
   }
   ```
 
-- **`pool_filtration/alive`** : Signal de vie (ON/OFF, expire après 5 minutes)
+- **`pool_filtration/alive`** : Heartbeat signal (ON/OFF, expires after 5 minutes)
 
-### Souscription (commandes)
+### Subscription (commands)
 
-- **`pool_filtration/control_mode/set`** : Changer le mode (`auto`, `manual_on`, `manual_off`)
-- **`pool_filtration/freeze_on/set`** : Définir le seuil d'activation antigel (nombre)
-- **`pool_filtration/freeze_off/set`** : Définir le seuil de désactivation antigel (nombre)
-- **`pool_filtration/min_minutes/set`** : Durée minimale de filtration (nombre)
-- **`pool_filtration/max_minutes/set`** : Durée maximale de filtration (nombre)
-- **`pool_filtration/noon_minutes/set`** : Heure de midi de repli en minutes (0-1439)
-- **`pool_filtration/coeff/set`** : Coefficient de filtration (nombre)
-- **`pool_filtration/replan/set`** : Forcer un recalcul du planning (envoyer `ON`)
-
----
-
-## Entités Home Assistant
-
-Le script publie automatiquement la configuration d'autodiscovery Home Assistant. Toutes les entités sont regroupées sous le même appareil "Pool filtration".
-
-### Capteurs
-
-- `pool_filtration_water_temperature` : Température de l'eau (°C)
-- `pool_filtration_air_temperature` : Température de l'air (°C)
-- `pool_filtration_maximum_water_temperature_today` : Température max du jour (°C)
-- `pool_filtration_maximum_temperature_yesterday` : Température max d'hier (°C)
-- `pool_filtration_filtration_start_time` : Heure de début (HH:MM)
-- `pool_filtration_filtration_stop_time` : Heure de fin (HH:MM)
-- `pool_filtration_filtration_duration` : Durée de filtration (heures)
-- `pool_filtration_filtration_reason` : Raison de la filtration (schedule/frost/manual/off)
-- `pool_filtration_last_planning_time` : Dernière planification (timestamp)
-- `pool_filtration_last_error` : Dernière erreur (si applicable)
-- `pool_filtration_heartbeat` : Signal de vie (timestamp)
-
-### Capteurs binaires
-
-- `pool_filtration_filtration_state` : État de la filtration (ON/OFF)
-- `pool_filtration_frost_protection` : Protection antigel active (ON/OFF)
-- `pool_filtration_alive` : Appareil en ligne (ON/OFF, expire après 5 min)
-
-### Contrôles
-
-- `pool_filtration_control_mode` : Sélecteur de mode (auto/manual_on/manual_off)
-- `pool_filtration_freeze_on` : Réglage seuil activation antigel
-- `pool_filtration_freeze_off` : Réglage seuil désactivation antigel
-- `pool_filtration_min_minutes` : Réglage durée minimale
-- `pool_filtration_max_minutes` : Réglage durée maximale
-- `pool_filtration_noon_minutes` : Réglage heure de midi
-- `pool_filtration_coeff` : Réglage coefficient de filtration
-- `pool_filtration_replan` : Bouton de replanification
+- **`pool_filtration/control_mode/set`** : Change mode (`auto`, `manual_on`, `manual_off`)
+- **`pool_filtration/freeze_on/set`** : Set frost protection activation threshold (number)
+- **`pool_filtration/freeze_off/set`** : Set frost protection deactivation threshold (number)
+- **`pool_filtration/min_minutes/set`** : Minimum filtration duration (number)
+- **`pool_filtration/max_minutes/set`** : Maximum filtration duration (number)
+- **`pool_filtration/noon_minutes/set`** : Fallback noon time in minutes (0-1439)
+- **`pool_filtration/coeff/set`** : Filtration coefficient (number)
+- **`pool_filtration/replan/set`** : Force schedule recalculation (send `ON`)
 
 ---
 
-## Dépannage
+## Home Assistant Entities
 
-### La filtration ne démarre pas
+The script automatically publishes Home Assistant autodiscovery configuration. All entities are grouped under the same "Pool filtration" device.
 
-1. Vérifiez que le mode de contrôle n'est pas sur `manual_off`
-2. Vérifiez que MQTT est connecté (entité `pool_filtration_alive` doit être ON)
-3. Vérifiez les logs du script dans l'interface Shelly
-4. Vérifiez que `filtrationStartTime` et `filtrationStopTime` sont définis
+### Sensors
 
-### L'antigel ne s'active pas
+- `pool_filtration_water_temperature` : Water temperature (°C)
+- `pool_filtration_air_temperature` : Air temperature (°C)
+- `pool_filtration_maximum_water_temperature_today` : Today's max temperature (°C)
+- `pool_filtration_maximum_temperature_yesterday` : Yesterday's max temperature (°C)
+- `pool_filtration_filtration_start_time` : Start time (HH:MM)
+- `pool_filtration_filtration_stop_time` : Stop time (HH:MM)
+- `pool_filtration_filtration_duration` : Filtration duration (hours)
+- `pool_filtration_filtration_reason` : Filtration reason (schedule/frost/manual/off)
+- `pool_filtration_last_planning_time` : Last planning (timestamp)
+- `pool_filtration_last_error` : Last error (if applicable)
+- `pool_filtration_heartbeat` : Heartbeat signal (timestamp)
 
-1. Vérifiez que la température de l'eau est bien lue (`waterTemperature` non null)
-2. Vérifiez les seuils `freezeOn` et `freezeOff`
-3. Vérifiez que le mode n'est pas sur `manual_off`
+### Binary sensors
 
-### Le planning ne se recalcule pas
+- `pool_filtration_filtration_state` : Filtration state (ON/OFF)
+- `pool_filtration_frost_protection` : Frost protection active (ON/OFF)
+- `pool_filtration_alive` : Device online (ON/OFF, expires after 5 min)
 
-1. Vérifiez que Home Assistant est accessible
-2. Vérifiez que `homeAssistantIp` et `homeAssistantToken` sont corrects
-3. Vérifiez que l'entité `sun.sun` existe dans Home Assistant
-4. Utilisez le bouton `replan` pour forcer un recalcul
+### Controls
 
-### Erreurs Home Assistant
-
-1. Vérifiez que l'API REST est activée
-2. Vérifiez que le token a les permissions nécessaires
-3. Vérifiez que l'IP est correcte et accessible depuis le Shelly
-4. Consultez `last_error` dans l'état MQTT pour plus de détails
-
-### Température non lue
-
-1. Vérifiez que le capteur de température est bien connecté
-2. Vérifiez que `waterSensorId` correspond au bon capteur
-3. Vérifiez la connexion du capteur dans l'interface Shelly
-
----
-
-## Notes techniques
-
-- Le script utilise un seul timer principal qui s'exécute toutes les minutes
-- Les températures sont lues toutes les 5 minutes
-- Le planning est recalculé chaque jour à 01h00
-- Tous les paramètres sont persistés dans le KVS du Shelly
-- L'autodiscovery Home Assistant est publiée automatiquement au démarrage
+- `pool_filtration_control_mode` : Mode selector (auto/manual_on/manual_off)
+- `pool_filtration_freeze_on` : Frost activation threshold setting
+- `pool_filtration_freeze_off` : Frost deactivation threshold setting
+- `pool_filtration_min_minutes` : Minimum duration setting
+- `pool_filtration_max_minutes` : Maximum duration setting
+- `pool_filtration_noon_minutes` : Noon time setting
+- `pool_filtration_coeff` : Filtration coefficient setting
+- `pool_filtration_replan` : Replanning button
 
 ---
 
-## Licence
+## Troubleshooting
 
-Ce projet est fourni tel quel, sans garantie. Utilisez à vos propres risques.
+### Filtration does not start
+
+1. Check that control mode is not set to `manual_off`
+2. Check that MQTT is connected (`pool_filtration_alive` entity must be ON)
+3. Check script logs in the Shelly interface
+4. Check that `filtrationStartTime` and `filtrationStopTime` are defined
+
+### Frost protection does not activate
+
+1. Check that water temperature is being read (`waterTemperature` not null)
+2. Check `freezeOn` and `freezeOff` thresholds
+3. Check that mode is not set to `manual_off`
+
+### Schedule does not recalculate
+
+1. Check that Home Assistant is accessible
+2. Check that `homeAssistantIp` and `homeAssistantToken` are correct
+3. Check that the `sun.sun` entity exists in Home Assistant
+4. Use the `replan` button to force a recalculation
+
+### Home Assistant errors
+
+1. Check that the REST API is enabled
+2. Check that the token has necessary permissions
+3. Check that the IP is correct and accessible from the Shelly
+4. Check `last_error` in MQTT state for more details
+
+### Temperature not read
+
+1. Check that the temperature sensor is properly connected
+2. Check that `waterSensorId` corresponds to the correct sensor
+3. Check sensor connection in the Shelly interface
+
+---
+
+## Technical Notes
+
+- The script uses a single main timer that runs every minute
+- Temperatures are read every 5 minutes
+- The schedule is recalculated every day at 01:00
+- All parameters are persisted in the Shelly KVS
+- Home Assistant autodiscovery is published automatically on startup
+
+---
+
+## License
+
+This project is provided as-is, without warranty. Use at your own risk.
 
