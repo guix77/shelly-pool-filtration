@@ -12,6 +12,7 @@ const ENTITY_PREFIX      = "pool_filtration";
 const BASE_TOPIC         = "homeassistant";
 const STATE_TOPIC        = "pool_filtration/state";
 const CONTROL_MODE_TOPIC = "pool_filtration/control_mode/set";
+const FILTRATION_STRATEGY_TOPIC = "pool_filtration/filtration_strategy/set";
 
 // ───── Magic numbers as constants ─────
 const MINUTES_PER_DAY                = 1440;
@@ -29,6 +30,9 @@ let minMinutes      = 120;
 let maxMinutes      = 960;
 let noonMinutes     = 825;
 let filtrationCoeff = 1.0;
+let filtrationStrategy = "temperature_linear"; // temperature_linear | winter_circulation
+let winterMinutes = 120;
+let winterCenterMinutes = 420; // 07:00
 
 // ───── Runtime state ─────
 let homeAssistantIp                    = null;
@@ -148,6 +152,15 @@ MQTT.subscribe(CONTROL_MODE_TOPIC, function (msg) {
   }
 });
 
+MQTT.subscribe(FILTRATION_STRATEGY_TOPIC, function (msg) {
+  if (typeof msg === "string" && (msg === "temperature_linear" || msg === "winter_circulation")) {
+    filtrationStrategy = msg;
+    Shelly.call("KVS.Set", { key: "filtrationStrategy", value: String(msg) });
+    planFiltration();
+    publishState();
+  }
+});
+
 MQTT.subscribe("pool_filtration/replan/set", function (msg) {
   if (msg === "ON") {
     lastError = "Manual re-planning requested";
@@ -190,6 +203,20 @@ registerNumberListener("pool_filtration/coeff/set", function (v) {
   filtrationCoeff = v;
 }, "filtrationCoeff", function (v) {
   return v >= 0.5 && v <= 2;
+});
+
+registerNumberListener("pool_filtration/winter_minutes/set", function (v) {
+  winterMinutes = v;
+  planFiltration();
+}, "winterMinutes", function (v) {
+  return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY;
+});
+
+registerNumberListener("pool_filtration/winter_center_minutes/set", function (v) {
+  winterCenterMinutes = v;
+  planFiltration();
+}, "winterCenterMinutes", function (v) {
+  return v >= 0 && v <= (MINUTES_PER_DAY - 1);
 });
 
 // ───── Autodiscovery for Home Assistant ─────
@@ -284,6 +311,8 @@ function autodiscovery() {
   enqueueNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "pool_filtration/max_minutes/set");
   enqueueNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "pool_filtration/noon_minutes/set");
   enqueueNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "pool_filtration/coeff/set");
+  enqueueNumber("winter_minutes", "Winter minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "pool_filtration/winter_minutes/set");
+  enqueueNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "pool_filtration/winter_center_minutes/set");
 
   // Control mode selector
   enqueueMisc(BASE_TOPIC + "/select/" + buildObjectId("control_mode") + "/config", {
@@ -299,6 +328,23 @@ function autodiscovery() {
       name: DEVICE_NAME,
       manufacturer: MANUFACTURER
     }
+  });
+
+  // Filtration strategy selector
+  enqueueMisc(BASE_TOPIC + "/select/" + buildObjectId("filtration_strategy") + "/config", {
+    name: "Filtration strategy",
+    unique_id: buildObjectId("filtration_strategy"),
+    state_topic: STATE_TOPIC,
+    value_template: "{{ value_json.filtrationStrategy }}",
+    command_topic: FILTRATION_STRATEGY_TOPIC,
+    options: ["temperature_linear", "winter_circulation"],
+    icon: "mdi:chart-timeline-variant",
+    device: {
+      identifiers: ["shelly_pool_" + mac],
+      name: DEVICE_NAME,
+      manufacturer: MANUFACTURER
+    },
+    entity_category: "config"
   });
 
   // Replan button
@@ -427,32 +473,51 @@ function planFiltration() {
       }
     } catch (_) {}
 
-    let tempForCalculation = maximumTemperatureYesterday;
-    if (tempForCalculation === null) {
-      tempForCalculation = maximumWaterTemperatureToday !== null ? maximumWaterTemperatureToday : 15;
+    let centerMinutes = localNoon;
+
+    if (filtrationStrategy === "winter_circulation") {
+      filtrationDuration = Math.max(
+        MIN_MINUTES_LIMIT,
+        Math.min(MINUTES_PER_DAY, Math.floor(winterMinutes))
+      );
+      centerMinutes = (typeof winterCenterMinutes === "number" && !isNaN(winterCenterMinutes))
+        ? ((winterCenterMinutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+        : 420;
+    } else {
+      // Default strategy: temperature_linear
+      let tempForCalculation = maximumTemperatureYesterday;
+      if (tempForCalculation === null) {
+        tempForCalculation = maximumWaterTemperatureToday !== null ? maximumWaterTemperatureToday : 15;
+      }
+
+      filtrationDuration = Math.max(
+        minMinutes,
+        Math.min(
+          maxMinutes,
+          Math.floor(tempForCalculation * TEMPERATURE_TO_MINUTES_FACTOR * filtrationCoeff)
+        )
+      );
+
+      if (isNaN(filtrationDuration) || filtrationDuration < 0) {
+        lastError = "Invalid filtration duration calculated (temp: " + tempForCalculation +
+                    "°C, coeff: " + filtrationCoeff + ", result: " + filtrationDuration + ")";
+        filtrationDuration = minMinutes;
+      }
+      centerMinutes = localNoon;
     }
 
-    filtrationDuration = Math.max(
-      minMinutes,
-      Math.min(
-        maxMinutes,
-        Math.floor(tempForCalculation * TEMPERATURE_TO_MINUTES_FACTOR * filtrationCoeff)
-      )
-    );
-
     if (isNaN(filtrationDuration) || filtrationDuration < 0) {
-      lastError = "Invalid filtration duration calculated (temp: " + tempForCalculation + 
-                  "°C, coeff: " + filtrationCoeff + ", result: " + filtrationDuration + ")";
+      lastError = "Invalid filtration duration calculated (strategy: " + filtrationStrategy + ", result: " + filtrationDuration + ")";
       filtrationDuration = minMinutes;
     }
 
-    filtrationStartTime = (localNoon - Math.floor(filtrationDuration / 2) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+    filtrationStartTime = (centerMinutes - Math.floor(filtrationDuration / 2) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
     filtrationStopTime  = (filtrationStartTime + filtrationDuration) % MINUTES_PER_DAY;
 
     if (isNaN(filtrationStartTime) || isNaN(filtrationStopTime)) {
       lastError = "Invalid filtration times calculated (start: " + filtrationStartTime + 
                   ", stop: " + filtrationStopTime + ", duration: " + filtrationDuration + 
-                  ", noon: " + localNoon + ")";
+                  ", center: " + centerMinutes + ")";
       filtrationStartTime = null;
       filtrationStopTime = null;
       return;
@@ -550,6 +615,7 @@ function publishState() {
     filtrationState: filtrationState ? "ON" : "OFF",
     frostProtection: frostProtection ? "ON" : "OFF",
     controlMode: controlMode,
+    filtrationStrategy: filtrationStrategy,
     filtrationReason: filtrationReason,
     lastError: lastError,
     freezeOn: freezeOn,
@@ -558,6 +624,8 @@ function publishState() {
     maxMinutes: maxMinutes,
     noonMinutes: noonMinutes,
     filtrationCoeff: filtrationCoeff,
+    winterMinutes: winterMinutes,
+    winterCenterMinutes: winterCenterMinutes,
     heartbeat: (new Date()).toISOString()
   }), 1, true);
 }
@@ -633,6 +701,24 @@ function validateParameters() {
     errors.push("freezeOn >= freezeOff: freezeOff adjusted to " + freezeOff);
     Shelly.call("KVS.Set", { key: "freezeOff", value: String(freezeOff) });
   }
+
+  if (filtrationStrategy !== "temperature_linear" && filtrationStrategy !== "winter_circulation") {
+    filtrationStrategy = "temperature_linear";
+    errors.push("Invalid filtrationStrategy: reset to temperature_linear");
+    Shelly.call("KVS.Set", { key: "filtrationStrategy", value: String(filtrationStrategy) });
+  }
+
+  if (isNaN(winterMinutes) || winterMinutes < MIN_MINUTES_LIMIT || winterMinutes > MINUTES_PER_DAY) {
+    winterMinutes = 120;
+    errors.push("Invalid winterMinutes: reset to 120");
+    Shelly.call("KVS.Set", { key: "winterMinutes", value: String(winterMinutes) });
+  }
+
+  if (isNaN(winterCenterMinutes) || winterCenterMinutes < 0 || winterCenterMinutes > (MINUTES_PER_DAY - 1)) {
+    winterCenterMinutes = 420;
+    errors.push("Invalid winterCenterMinutes: reset to 420");
+    Shelly.call("KVS.Set", { key: "winterCenterMinutes", value: String(winterCenterMinutes) });
+  }
   
   if (errors.length > 0) {
     lastError = "Parameter validation error: " + errors.join(", ");
@@ -643,7 +729,8 @@ function validateParameters() {
 loadKVS([
   "homeAssistantIp", "homeAssistantToken", "homeAssistantAirTemperatureEntityId",
   "waterSensorId", "airSensorId", "maximumTemperatureYesterday",
-  "freezeOn", "freezeOff", "minMinutes", "maxMinutes", "noonMinutes", "filtrationCoeff"
+  "freezeOn", "freezeOff", "minMinutes", "maxMinutes", "noonMinutes", "filtrationCoeff",
+  "filtrationStrategy", "winterMinutes", "winterCenterMinutes"
 ], function (v) {
   if (v.homeAssistantIp) homeAssistantIp = v.homeAssistantIp;
   if (v.homeAssistantToken) homeAssistantToken = v.homeAssistantToken;
@@ -657,6 +744,9 @@ loadKVS([
   if (v.maxMinutes) maxMinutes = parseInt(v.maxMinutes, 10);
   if (v.noonMinutes) noonMinutes = parseInt(v.noonMinutes, 10);
   if (v.filtrationCoeff) filtrationCoeff = parseFloat(v.filtrationCoeff);
+  if (v.filtrationStrategy) filtrationStrategy = String(v.filtrationStrategy);
+  if (v.winterMinutes) winterMinutes = parseInt(v.winterMinutes, 10);
+  if (v.winterCenterMinutes) winterCenterMinutes = parseInt(v.winterCenterMinutes, 10);
 
   // Validate and auto-correct parameters
   validateParameters();

@@ -67,6 +67,9 @@ All parameters can be modified via MQTT and are persisted in KVS:
 | `maxMinutes` | `pool_filtration/max_minutes/set` | 960 min | Maximum daily filtration duration |
 | `noonMinutes` | `pool_filtration/noon_minutes/set` | 825 min | Fallback noon time (13:45) |
 | `filtrationCoeff` | `pool_filtration/coeff/set` | 1.0 | Filtration duration multiplier coefficient |
+| `filtrationStrategy` | `pool_filtration/filtration_strategy/set` | `temperature_linear` | Planning strategy (`temperature_linear` or `winter_circulation`) |
+| `winterMinutes` | `pool_filtration/winter_minutes/set` | 120 min | Winter maintenance circulation duration (used when strategy = `winter_circulation`) |
+| `winterCenterMinutes` | `pool_filtration/winter_center_minutes/set` | 420 min | Center time in minutes since midnight (default 07:00) for `winter_circulation` |
 
 ### Control mode
 
@@ -100,6 +103,16 @@ The filtration period is **centered around solar noon** (calculated automaticall
 **Example:** If solar noon is at 1:00 PM and the calculated duration is 6 hours:
 - Start: 1:00 PM - 3h = 10:00 AM
 - End: 1:00 PM + 3h = 4:00 PM
+
+### 2bis. Winter circulation strategy (optional)
+
+If `filtrationStrategy` is set to **`winter_circulation`**, the daily duration is no longer based on the formula *temperature × 30 minutes*.
+Instead, filtration runs for a fixed **maintenance circulation** duration:
+
+- `winterMinutes` (default: 120 min/day)
+- The schedule is centered around `winterCenterMinutes` (minutes since midnight, default: 07:00 / 420)
+
+This mode is intended for winter operation when you want a simple, stable daily circulation window.
 
 ### 3. Daily update
 
@@ -228,6 +241,7 @@ Although the system adapts automatically, you can adjust parameters to optimize 
     "filtrationState": "ON",
     "frostProtection": "OFF",
     "controlMode": "auto",
+    "filtrationStrategy": "temperature_linear",
     "filtrationReason": "schedule",
     "lastError": null,
     "freezeOn": 0.5,
@@ -236,6 +250,8 @@ Although the system adapts automatically, you can adjust parameters to optimize 
     "maxMinutes": 960,
     "noonMinutes": 825,
     "filtrationCoeff": 1.0,
+    "winterMinutes": 120,
+    "winterCenterMinutes": 420,
     "heartbeat": "2024-01-15T14:30:00.000Z"
   }
   ```
@@ -245,12 +261,15 @@ Although the system adapts automatically, you can adjust parameters to optimize 
 ### Subscription (commands)
 
 - **`pool_filtration/control_mode/set`** : Change mode (`auto`, `manual_on`, `manual_off`)
+- **`pool_filtration/filtration_strategy/set`** : Change planning strategy (`temperature_linear`, `winter_circulation`)
 - **`pool_filtration/freeze_on/set`** : Set frost protection activation threshold (number)
 - **`pool_filtration/freeze_off/set`** : Set frost protection deactivation threshold (number)
 - **`pool_filtration/min_minutes/set`** : Minimum filtration duration (number)
 - **`pool_filtration/max_minutes/set`** : Maximum filtration duration (number)
 - **`pool_filtration/noon_minutes/set`** : Fallback noon time in minutes (0-1439)
 - **`pool_filtration/coeff/set`** : Filtration coefficient (number)
+- **`pool_filtration/winter_minutes/set`** : Winter maintenance duration in minutes (used when strategy = `winter_circulation`)
+- **`pool_filtration/winter_center_minutes/set`** : Winter center time in minutes since midnight (0-1439)
 - **`pool_filtration/replan/set`** : Force schedule recalculation (send `ON`)
 
 ---
@@ -284,12 +303,15 @@ The script automatically publishes Home Assistant autodiscovery configuration. A
 ### Controls
 
 - `pool_filtration_control_mode` : Mode selector (auto/manual_on/manual_off)
+- `pool_filtration_filtration_strategy` : Strategy selector (temperature_linear/winter_circulation)
 - `pool_filtration_freeze_on` : Frost activation threshold setting
 - `pool_filtration_freeze_off` : Frost deactivation threshold setting
 - `pool_filtration_min_minutes` : Minimum duration setting
 - `pool_filtration_max_minutes` : Maximum duration setting
 - `pool_filtration_noon_minutes` : Noon time setting
 - `pool_filtration_coeff` : Filtration coefficient setting
+- `pool_filtration_winter_minutes` : Winter maintenance duration setting
+- `pool_filtration_winter_center_minutes` : Winter center time setting (minutes since midnight)
 - `pool_filtration_replan` : Replanning button
 
 ---
