@@ -22,6 +22,8 @@ const WATER_READ_INTERVAL            = 5;      // minutes
 const MAIN_LOOP_INTERVAL             = 60000; // milliseconds
 const HTTP_TIMEOUT                    = 5;      // seconds
 const MIN_MINUTES_LIMIT               = 30;     // minimum value for minMinutes/maxMinutes
+const WINTER_MINUTES_MIN              = 60;
+const WINTER_MINUTES_MAX              = 360;
 const SENSOR_FAILURE_TIMEOUT          = 600000; // 10 minutes in milliseconds
 
 // ───── Configurable parameters (can be changed via MQTT) ─────
@@ -43,7 +45,8 @@ let waterSensorId                      = 0;
 let airSensorId                        = 1;
 
 let waterTemperature            = null;
-let airTemperature              = null;
+let airTemperature              = null; // Shelly air sensor (probe)
+let airTemperatureHA            = null; // Optional Home Assistant air temperature
 let airTemperatureSensor        = null;
 let airTemperatureMin           = null;
 let maximumTemperatureYesterday = null;
@@ -202,7 +205,7 @@ registerNumberTopic("pool_filtration/coeff/set", function (v) { filtrationCoeff 
 });
 
 registerNumberTopic("pool_filtration/winter_minutes/set", function (v) { winterMinutes = v; }, "winterMinutes", function (v) {
-  return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY;
+  return v >= WINTER_MINUTES_MIN && v <= WINTER_MINUTES_MAX;
 }, function () {
   if (filtrationStrategy === "winter_circulation") planFiltration();
 });
@@ -303,35 +306,34 @@ function autodiscovery() {
     switch (i) {
       // Sensors
       case 0:  return buildSensor("water_temperature", "Water temperature", "°C", "temperature", "mdi:waves", "{{ value_json.waterTemperature }}");
-      case 1:  return buildSensor("air_temperature", "Air temperature", "°C", "temperature", "mdi:weather-sunny", "{{ value_json.airTemperature }}");
-      case 2:  return buildSensor("air_temperature_sensor", "Air temperature (Shelly sensor)", "°C", "temperature", "mdi:thermometer", "{{ value_json.airTemperatureSensor }}", true);
-      case 3:  return buildSensor("air_temperature_min", "Air temperature (freeze min)", "°C", "temperature", "mdi:snowflake-thermometer", "{{ value_json.airTemperatureMin }}", true);
-      case 4:  return buildSensor("maximum_water_temperature_today", "Max temp today", "°C", "temperature", "mdi:calendar-today", "{{ value_json.maximumWaterTemperatureToday }}");
-      case 5:  return buildSensor("maximum_temperature_yesterday", "Max temp yesterday", "°C", "temperature", "mdi:calendar-clock", "{{ value_json.maximumTemperatureYesterday }}");
-      case 6:  return buildSensor("filtration_start_time", "Start time", null, null, "mdi:clock-start", "{{ value_json.filtrationStartTime }}");
-      case 7:  return buildSensor("filtration_stop_time", "Stop time", null, null, "mdi:clock-end", "{{ value_json.filtrationStopTime }}");
-      case 8:  return buildSensor("last_planning_time", "Last planning", null, "timestamp", "mdi:calendar-range", "{{ value_json.lastPlanningTime }}", true);
-      case 9:  return buildSensor("filtration_duration", "Duration", "h", "duration", "mdi:timer", "{{ value_json.filtrationDuration }}");
-      case 10: return buildSensor("filtration_reason", "Reason", null, null, "mdi:comment-question-outline", "{{ value_json.filtrationReason }}", true);
-      case 11: return buildSensor("last_error", "Last error", null, null, "mdi:alert", "{{ value_json.lastError }}", true);
-      case 12: return buildSensor("heartbeat", "Heartbeat", null, "timestamp", "mdi:heart-pulse", "{{ value_json.heartbeat }}", true);
+      case 1:  return buildSensor("air_temperature", "Air temperature", "°C", "temperature", "mdi:thermometer", "{{ value_json.airTemperature }}");
+      case 2:  return buildSensor("air_temperature_min", "Min air temperature for freeze", "°C", "temperature", "mdi:snowflake-thermometer", "{{ value_json.airTemperatureMin }}");
+      case 3:  return buildSensor("maximum_water_temperature_today", "Max temp today", "°C", "temperature", "mdi:calendar-today", "{{ value_json.maximumWaterTemperatureToday }}");
+      case 4:  return buildSensor("maximum_temperature_yesterday", "Max temp yesterday", "°C", "temperature", "mdi:calendar-clock", "{{ value_json.maximumTemperatureYesterday }}");
+      case 5:  return buildSensor("filtration_start_time", "Start time", null, null, "mdi:clock-start", "{{ value_json.filtrationStartTime }}");
+      case 6:  return buildSensor("filtration_stop_time", "Stop time", null, null, "mdi:clock-end", "{{ value_json.filtrationStopTime }}");
+      case 7:  return buildSensor("last_planning_time", "Last planning", null, "timestamp", "mdi:calendar-range", "{{ value_json.lastPlanningTime }}", true);
+      case 8:  return buildSensor("filtration_duration", "Duration", "h", "duration", "mdi:timer", "{{ value_json.filtrationDuration }}");
+      case 9:  return buildSensor("filtration_reason", "Reason", null, null, "mdi:comment-question-outline", "{{ value_json.filtrationReason }}", true);
+      case 10: return buildSensor("last_error", "Last error", null, null, "mdi:alert", "{{ value_json.lastError }}", true);
+      case 11: return buildSensor("heartbeat", "Heartbeat", null, "timestamp", "mdi:heart-pulse", "{{ value_json.heartbeat }}", true);
 
       // Binary sensors
-      case 13: return buildBinarySensor("filtration_state", "Filtration state", "running", "mdi:pump", "{{ value_json.filtrationState }}");
-      case 14: return buildBinarySensor("frost_protection", "Frost protection", "cold", "mdi:snowflake", "{{ value_json.frostProtection }}");
+      case 12: return buildBinarySensor("filtration_state", "Filtration state", "running", "mdi:pump", "{{ value_json.filtrationState }}");
+      case 13: return buildBinarySensor("frost_protection", "Frost protection", "cold", "mdi:snowflake", "{{ value_json.frostProtection }}");
 
       // Number inputs
-      case 15: return buildNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "pool_filtration/freeze_on/set");
-      case 16: return buildNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "pool_filtration/freeze_off/set");
-      case 17: return buildNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "pool_filtration/min_minutes/set");
-      case 18: return buildNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "pool_filtration/max_minutes/set");
-      case 19: return buildNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "pool_filtration/noon_minutes/set");
-      case 20: return buildNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "pool_filtration/coeff/set");
-      case 21: return buildNumber("winter_minutes", "Winter minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "pool_filtration/winter_minutes/set");
-      case 22: return buildNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "pool_filtration/winter_center_minutes/set");
+      case 14: return buildNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "pool_filtration/freeze_on/set");
+      case 15: return buildNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "pool_filtration/freeze_off/set");
+      case 16: return buildNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "pool_filtration/min_minutes/set");
+      case 17: return buildNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "pool_filtration/max_minutes/set");
+      case 18: return buildNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "pool_filtration/noon_minutes/set");
+      case 19: return buildNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "pool_filtration/coeff/set");
+      case 20: return buildNumber("winter_minutes", "Winter minutes", WINTER_MINUTES_MIN, WINTER_MINUTES_MAX, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "pool_filtration/winter_minutes/set");
+      case 21: return buildNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "pool_filtration/winter_center_minutes/set");
 
       // Control mode selector
-      case 23: return buildMisc(BASE_TOPIC + "/select/" + buildObjectId("control_mode") + "/config", {
+      case 22: return buildMisc(BASE_TOPIC + "/select/" + buildObjectId("control_mode") + "/config", {
         name: "Control mode",
         unique_id: buildObjectId("control_mode"),
         state_topic: STATE_TOPIC,
@@ -343,7 +345,7 @@ function autodiscovery() {
       });
 
       // Filtration strategy selector
-      case 24: return buildMisc(BASE_TOPIC + "/select/" + buildObjectId("filtration_strategy") + "/config", {
+      case 23: return buildMisc(BASE_TOPIC + "/select/" + buildObjectId("filtration_strategy") + "/config", {
         name: "Filtration strategy",
         unique_id: buildObjectId("filtration_strategy"),
         state_topic: STATE_TOPIC,
@@ -356,7 +358,7 @@ function autodiscovery() {
       });
 
       // Replan button
-      case 25: return buildMisc(BASE_TOPIC + "/button/" + buildObjectId("replan") + "/config", {
+      case 24: return buildMisc(BASE_TOPIC + "/button/" + buildObjectId("replan") + "/config", {
         name: "Replan",
         unique_id: buildObjectId("replan"),
         command_topic: REPLAN_TOPIC,
@@ -366,7 +368,7 @@ function autodiscovery() {
       });
 
       // Alive (connectivity)
-      case 26: return buildMisc(BASE_TOPIC + "/binary_sensor/" + ENTITY_PREFIX + "_alive/config", {
+      case 25: return buildMisc(BASE_TOPIC + "/binary_sensor/" + ENTITY_PREFIX + "_alive/config", {
         name: "Alive",
         unique_id: ENTITY_PREFIX + "_alive",
         state_topic: "pool_filtration/alive",
@@ -422,6 +424,8 @@ function readWater() {
 function readAirSensor() {
   let res = Shelly.getComponentStatus("temperature", airSensorId);
   airTemperatureSensor = (res && typeof res.tC === "number") ? res.tC : null;
+  // Make Shelly air probe the canonical "airTemperature" exposed to HA
+  airTemperature = airTemperatureSensor;
   computeAirTemperatureMin();
 }
 
@@ -431,7 +435,7 @@ function readAirSensor() {
  */
 function computeAirTemperatureMin() {
   let a = airTemperatureSensor;
-  let b = airTemperature;
+  let b = airTemperatureHA;
   if (a !== null && b !== null) airTemperatureMin = Math.min(a, b);
   else if (a !== null) airTemperatureMin = a;
   else if (b !== null) airTemperatureMin = b;
@@ -445,16 +449,16 @@ function computeAirTemperatureMin() {
  */
 function readAir() {
   if (!homeAssistantAirTemperatureEntityId) {
-    airTemperature = null;
+    airTemperatureHA = null;
     computeAirTemperatureMin();
     return;
   }
   haGET("states/" + homeAssistantAirTemperatureEntityId, function (body) {
     try {
       let t = parseFloat(JSON.parse(body).state);
-      airTemperature = !isNaN(t) ? t : null;
+      airTemperatureHA = !isNaN(t) ? t : null;
     } catch (err) {
-      airTemperature = null;
+      airTemperatureHA = null;
       lastError = "Air temperature read error: " + err.message + 
                   " (entity: " + (homeAssistantAirTemperatureEntityId || "not set") + ")";
     }
@@ -483,8 +487,8 @@ function planFiltration() {
 
     if (filtrationStrategy === "winter_circulation") {
       filtrationDuration = Math.max(
-        MIN_MINUTES_LIMIT,
-        Math.min(MINUTES_PER_DAY, Math.floor(winterMinutes))
+        WINTER_MINUTES_MIN,
+        Math.min(WINTER_MINUTES_MAX, Math.floor(winterMinutes))
       );
       centerMinutes = (typeof winterCenterMinutes === "number" && !isNaN(winterCenterMinutes))
         ? ((winterCenterMinutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
@@ -610,7 +614,7 @@ function publishState() {
   MQTT.publish(STATE_TOPIC, JSON.stringify({
     waterTemperature: waterTemperature,
     airTemperature: airTemperature,
-    airTemperatureSensor: airTemperatureSensor,
+    airTemperatureHA: airTemperatureHA,
     airTemperatureMin: airTemperatureMin,
     maximumWaterTemperatureToday: maximumWaterTemperatureToday,
     maximumTemperatureYesterday: maximumTemperatureYesterday,
@@ -717,6 +721,18 @@ function validateParameters() {
   if (isNaN(winterMinutes) || winterMinutes < MIN_MINUTES_LIMIT || winterMinutes > MINUTES_PER_DAY) {
     winterMinutes = 120;
     errors.push("Invalid winterMinutes: reset to 120");
+    Shelly.call("KVS.Set", { key: "winterMinutes", value: String(winterMinutes) });
+  }
+
+  if (winterMinutes < WINTER_MINUTES_MIN) {
+    winterMinutes = WINTER_MINUTES_MIN;
+    errors.push("winterMinutes < " + WINTER_MINUTES_MIN + ": adjusted");
+    Shelly.call("KVS.Set", { key: "winterMinutes", value: String(winterMinutes) });
+  }
+
+  if (winterMinutes > WINTER_MINUTES_MAX) {
+    winterMinutes = WINTER_MINUTES_MAX;
+    errors.push("winterMinutes > " + WINTER_MINUTES_MAX + ": adjusted");
     Shelly.call("KVS.Set", { key: "winterMinutes", value: String(winterMinutes) });
   }
 

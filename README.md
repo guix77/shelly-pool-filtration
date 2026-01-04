@@ -68,7 +68,7 @@ All parameters can be modified via MQTT and are persisted in KVS:
 | `noonMinutes` | `pool_filtration/noon_minutes/set` | 825 min | Fallback noon time (13:45) |
 | `filtrationCoeff` | `pool_filtration/coeff/set` | 1.0 | Filtration duration multiplier coefficient |
 | `filtrationStrategy` | `pool_filtration/filtration_strategy/set` | `temperature_linear` | Planning strategy (`temperature_linear` or `winter_circulation`) |
-| `winterMinutes` | `pool_filtration/winter_minutes/set` | 120 min | Winter maintenance circulation duration (used when strategy = `winter_circulation`) |
+| `winterMinutes` | `pool_filtration/winter_minutes/set` | 120 min | Winter maintenance circulation duration (used when strategy = `winter_circulation`, min 60 / max 360) |
 | `winterCenterMinutes` | `pool_filtration/winter_center_minutes/set` | 420 min | Center time in minutes since midnight (default 07:00) for `winter_circulation` |
 
 ### Control mode
@@ -126,7 +126,7 @@ Every day at **01:00**, the system:
 - **Water temperature** : Read every 5 minutes from the sensor connected to the Shelly
 - **Air temperature (Shelly sensor)** : Read every 5 minutes from the Shelly temperature sensor (`airSensorId`)
 - **Air temperature (Home Assistant)** : Read every 5 minutes from Home Assistant (`homeAssistantAirTemperatureEntityId`, optional)
-- **Air temperature used for frost protection** : `airTemperatureMin = min(airTemperatureSensor, airTemperature)` (lowest available value)
+- **Air temperature used for frost protection** : `airTemperatureMin = min(airTemperature (Shelly), airTemperatureHA)` (lowest available value)
 - **Maximum tracking** : The system automatically tracks the daily maximum temperature
 
 ### 5. Control priorities
@@ -230,7 +230,7 @@ Although the system adapts automatically, you can adjust parameters to optimize 
   {
     "waterTemperature": 25.5,
     "airTemperature": 22.0,
-    "airTemperatureSensor": 21.0,
+    "airTemperatureHA": 21.0,
     "airTemperatureMin": 21.0,
     "maximumWaterTemperatureToday": 26.0,
     "maximumTemperatureYesterday": 25.8,
@@ -281,9 +281,8 @@ The script automatically publishes Home Assistant autodiscovery configuration. A
 ### Sensors
 
 - `pool_filtration_water_temperature` : Water temperature (°C)
-- `pool_filtration_air_temperature` : Air temperature (°C) (Home Assistant entity if configured)
-- `pool_filtration_air_temperature_sensor` : Air temperature (°C) (Shelly sensor)
-- `pool_filtration_air_temperature_min` : Air temperature used for frost protection (°C) (min of available air temperatures)
+- `pool_filtration_air_temperature` : Air temperature (°C) (Shelly sensor)
+- `pool_filtration_air_temperature_min` : Min air temperature for freeze (°C)
 - `pool_filtration_maximum_water_temperature_today` : Today's max temperature (°C)
 - `pool_filtration_maximum_temperature_yesterday` : Yesterday's max temperature (°C)
 - `pool_filtration_filtration_start_time` : Start time (HH:MM)
@@ -327,7 +326,7 @@ The script automatically publishes Home Assistant autodiscovery configuration. A
 
 ### Frost protection does not activate
 
-1. Check that at least one air temperature is being read (`airTemperatureSensor` or `airTemperature` not null)
+1. Check that at least one air temperature is being read (`airTemperature` or `airTemperatureHA` not null)
 2. Check `freezeOn` and `freezeOff` thresholds
 3. Check that mode is not set to `manual_off`
 
