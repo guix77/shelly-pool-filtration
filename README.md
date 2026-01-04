@@ -111,7 +111,9 @@ Every day at **01:00**, the system:
 ### 4. Temperature readings
 
 - **Water temperature** : Read every 5 minutes from the sensor connected to the Shelly
-- **Air temperature** : Read every 5 minutes from Home Assistant (for information only)
+- **Air temperature (Shelly sensor)** : Read every 5 minutes from the Shelly temperature sensor (`airSensorId`)
+- **Air temperature (Home Assistant)** : Read every 5 minutes from Home Assistant (`homeAssistantAirTemperatureEntityId`, optional)
+- **Air temperature used for frost protection** : `airTemperatureMin = min(airTemperatureSensor, airTemperature)` (lowest available value)
 - **Maximum tracking** : The system automatically tracks the daily maximum temperature
 
 ### 5. Control priorities
@@ -149,11 +151,11 @@ Frost protection is a **priority** mechanism that protects the pool against free
 The system uses two thresholds with **hysteresis** to avoid frequent toggling:
 
 - **`freezeOn`** (default: 0.5°C) : Frost protection **activation** threshold
-  - When water temperature drops to 0.5°C or below, frost protection activates
+  - When `airTemperatureMin` drops to 0.5°C or below, frost protection activates
   - Filtration is **forced ON** immediately, regardless of schedule
 
 - **`freezeOff`** (default: 1.0°C) : Frost protection **deactivation** threshold
-  - When temperature rises to 1.0°C or above, frost protection deactivates
+  - When `airTemperatureMin` rises to 1.0°C or above, frost protection deactivates
   - Filtration resumes normal operation according to schedule
 
 #### Why hysteresis?
@@ -186,11 +188,11 @@ During active winterization, several phenomena occur simultaneously:
 
 **Typical day:**
 - **01:00** : Schedule recalculation → Duration = 12 × 30 = 360 minutes (6h)
-- **02:00** : Water temperature = 0.3°C → **Frost protection activated** → Filtration ON
-- **08:00** : Water temperature = 1.2°C → Frost protection deactivated → Return to schedule
+- **02:00** : Air temperature min = 0.3°C → **Frost protection activated** → Filtration ON
+- **08:00** : Air temperature min = 1.2°C → Frost protection deactivated → Return to schedule
 - **10:00** : Schedule start (centered on noon) → Filtration ON
 - **16:00** : Schedule end → Filtration OFF
-- **23:00** : Water temperature = 0.4°C → **Frost protection activated** → Filtration ON
+- **23:00** : Air temperature min = 0.4°C → **Frost protection activated** → Filtration ON
 
 **Result:** The pool is protected against freezing at night, and daily filtration continues to function to keep water clean.
 
@@ -215,6 +217,8 @@ Although the system adapts automatically, you can adjust parameters to optimize 
   {
     "waterTemperature": 25.5,
     "airTemperature": 22.0,
+    "airTemperatureSensor": 21.0,
+    "airTemperatureMin": 21.0,
     "maximumWaterTemperatureToday": 26.0,
     "maximumTemperatureYesterday": 25.8,
     "filtrationStartTime": "10:00",
@@ -258,7 +262,9 @@ The script automatically publishes Home Assistant autodiscovery configuration. A
 ### Sensors
 
 - `pool_filtration_water_temperature` : Water temperature (°C)
-- `pool_filtration_air_temperature` : Air temperature (°C)
+- `pool_filtration_air_temperature` : Air temperature (°C) (Home Assistant entity if configured)
+- `pool_filtration_air_temperature_sensor` : Air temperature (°C) (Shelly sensor)
+- `pool_filtration_air_temperature_min` : Air temperature used for frost protection (°C) (min of available air temperatures)
 - `pool_filtration_maximum_water_temperature_today` : Today's max temperature (°C)
 - `pool_filtration_maximum_temperature_yesterday` : Yesterday's max temperature (°C)
 - `pool_filtration_filtration_start_time` : Start time (HH:MM)
@@ -299,7 +305,7 @@ The script automatically publishes Home Assistant autodiscovery configuration. A
 
 ### Frost protection does not activate
 
-1. Check that water temperature is being read (`waterTemperature` not null)
+1. Check that at least one air temperature is being read (`airTemperatureSensor` or `airTemperature` not null)
 2. Check `freezeOn` and `freezeOff` thresholds
 3. Check that mode is not set to `manual_off`
 

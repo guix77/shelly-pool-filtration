@@ -39,6 +39,8 @@ let airSensorId                        = 1;
 
 let waterTemperature            = null;
 let airTemperature              = null;
+let airTemperatureSensor        = null;
+let airTemperatureMin           = null;
 let maximumTemperatureYesterday = null;
 let maximumWaterTemperatureToday = null;
 let lastWaterTemperatureReadTime = null;
@@ -259,6 +261,8 @@ function autodiscovery() {
   // Sensors
   enqueueSensor("water_temperature", "Water temperature", "°C", "temperature", "mdi:waves", "{{ value_json.waterTemperature }}");
   enqueueSensor("air_temperature", "Air temperature", "°C", "temperature", "mdi:weather-sunny", "{{ value_json.airTemperature }}");
+  enqueueSensor("air_temperature_sensor", "Air temperature (Shelly sensor)", "°C", "temperature", "mdi:thermometer", "{{ value_json.airTemperatureSensor }}", true);
+  enqueueSensor("air_temperature_min", "Air temperature (freeze min)", "°C", "temperature", "mdi:snowflake-thermometer", "{{ value_json.airTemperatureMin }}", true);
   enqueueSensor("maximum_water_temperature_today", "Max temp today", "°C", "temperature", "mdi:calendar-today", "{{ value_json.maximumWaterTemperatureToday }}");
   enqueueSensor("maximum_temperature_yesterday", "Max temp yesterday", "°C", "temperature", "mdi:calendar-clock", "{{ value_json.maximumTemperatureYesterday }}");
   enqueueSensor("filtration_start_time", "Start time", null, null, "mdi:clock-start", "{{ value_json.filtrationStartTime }}");
@@ -360,6 +364,29 @@ function readWater() {
 }
 
 /**
+ * Reads air temperature from the Shelly temperature sensor (airSensorId)
+ * Updates airTemperatureSensor global variable
+ */
+function readAirSensor() {
+  let res = Shelly.getComponentStatus("temperature", airSensorId);
+  airTemperatureSensor = (res && typeof res.tC === "number") ? res.tC : null;
+  computeAirTemperatureMin();
+}
+
+/**
+ * Computes the air temperature used for frost protection:
+ * minimum of Shelly air sensor and Home Assistant air temperature when available.
+ */
+function computeAirTemperatureMin() {
+  let a = airTemperatureSensor;
+  let b = airTemperature;
+  if (a !== null && b !== null) airTemperatureMin = Math.min(a, b);
+  else if (a !== null) airTemperatureMin = a;
+  else if (b !== null) airTemperatureMin = b;
+  else airTemperatureMin = null;
+}
+
+/**
  * Reads air temperature from Home Assistant
  * Returns early if homeAssistantAirTemperatureEntityId is not configured
  * Updates airTemperature global variable
@@ -367,6 +394,7 @@ function readWater() {
 function readAir() {
   if (!homeAssistantAirTemperatureEntityId) {
     airTemperature = null;
+    computeAirTemperatureMin();
     return;
   }
   haGET("states/" + homeAssistantAirTemperatureEntityId, function (body) {
@@ -378,6 +406,7 @@ function readAir() {
       lastError = "Air temperature read error: " + err.message + 
                   " (entity: " + (homeAssistantAirTemperatureEntityId || "not set") + ")";
     }
+    computeAirTemperatureMin();
   });
 }
 
@@ -461,20 +490,15 @@ function updateFiltrationState() {
     filtrationReason = "manual";
     frostProtection = false;
   } else {
-    // Check for sensor failure (no reading for more than 10 minutes)
-    let sensorFailed = lastWaterTemperatureReadTime !== null && 
-                       (Date.now() - lastWaterTemperatureReadTime) > SENSOR_FAILURE_TIMEOUT;
-
-    // Degraded mode: if sensor failed and air temperature is low, activate frost protection as precaution
-    if (sensorFailed && airTemperature !== null && airTemperature < freezeOn) {
-      frostProtection = true;
-      lastError = "Sensor failure detected: frost protection activated as precaution (air temp: " + airTemperature + "°C)";
-    }
-
-    // Normal frost protection logic (only if sensor is working)
-    if (!sensorFailed) {
-      if (!frostProtection && waterTemperature !== null && waterTemperature <= freezeOn) frostProtection = true;
-      if (frostProtection && waterTemperature !== null && waterTemperature >= freezeOff) frostProtection = false;
+    // Frost protection is governed by the lowest available air temperature (Shelly sensor vs HA entity)
+    if (airTemperatureMin === null) {
+      // Do not toggle frostProtection without any air temperature data
+      if (!lastError) {
+        lastError = "No air temperature available: frost protection unchanged (need Shelly air sensor and/or HA air entity)";
+      }
+    } else {
+      if (!frostProtection && airTemperatureMin <= freezeOn) frostProtection = true;
+      if (frostProtection && airTemperatureMin >= freezeOff) frostProtection = false;
     }
 
     if (frostProtection) {
@@ -515,6 +539,8 @@ function publishState() {
   MQTT.publish(STATE_TOPIC, JSON.stringify({
     waterTemperature: waterTemperature,
     airTemperature: airTemperature,
+    airTemperatureSensor: airTemperatureSensor,
+    airTemperatureMin: airTemperatureMin,
     maximumWaterTemperatureToday: maximumWaterTemperatureToday,
     maximumTemperatureYesterday: maximumTemperatureYesterday,
     filtrationStartTime: minutesToHHMM(filtrationStartTime),
@@ -637,6 +663,7 @@ loadKVS([
 
   runAutodiscoveryWhenReady();
   readWater();
+  readAirSensor();
   readAir();
 
   if (maximumTemperatureYesterday === null && waterTemperature !== null) {
@@ -661,6 +688,7 @@ Timer.set(MAIN_LOOP_INTERVAL, true, function () {
   // Every WATER_READ_INTERVAL minutes
   if (loopCount % WATER_READ_INTERVAL === 0) {
     readWater();
+    readAirSensor();
     readAir();
   }
 
