@@ -13,6 +13,7 @@ const BASE_TOPIC         = "homeassistant";
 const STATE_TOPIC        = "pool_filtration/state";
 const CONTROL_MODE_TOPIC = "pool_filtration/control_mode/set";
 const FILTRATION_STRATEGY_TOPIC = "pool_filtration/filtration_strategy/set";
+const COMMAND_TOPIC      = "pool_filtration/cmd";
 
 // ───── Magic numbers as constants ─────
 const MINUTES_PER_DAY                = 1440;
@@ -127,96 +128,96 @@ function haGET(path, cb) {
 }
 
 // ───── MQTT input handlers ─────
-/**
- * Registers an MQTT listener for numeric values with validation
- * @param {string} topic - MQTT topic to subscribe to
- * @param {function} setter - Function to call with validated value
- * @param {string} kvsKey - KVS key to persist the value
- * @param {function|null} validator - Optional validation function returning boolean
- */
-function registerNumberListener(topic, setter, kvsKey, validator) {
-  MQTT.subscribe(topic, function (msg) {
-    let v = parseFloat(msg);
+// NOTE: Shelly scripts have a low limit on MQTT subscriptions.
+// We keep a single subscription and dispatch commands via JSON payloads on COMMAND_TOPIC.
+
+let commandHandlers = {};
+
+function registerNumberCommand(key, setter, kvsKey, validator, onAfterSet) {
+  commandHandlers[key] = function (raw) {
+    let v = parseFloat(raw);
     if (!isNaN(v) && (!validator || validator(v))) {
       setter(v);
-      Shelly.call("KVS.Set", { key: kvsKey, value: String(v) });
+      if (kvsKey) Shelly.call("KVS.Set", { key: kvsKey, value: String(v) });
+      if (onAfterSet) onAfterSet(v);
       publishState();
     }
-  });
+  };
 }
 
-MQTT.subscribe(CONTROL_MODE_TOPIC, function (msg) {
-  if (typeof msg === "string" && (msg === "auto" || msg === "manual_on" || msg === "manual_off")) {
-    controlMode = msg;
+function registerStringCommand(key, setter, kvsKey, validator, onAfterSet) {
+  commandHandlers[key] = function (raw) {
+    if (typeof raw !== "string") return;
+    if (validator && !validator(raw)) return;
+    setter(raw);
+    if (kvsKey) Shelly.call("KVS.Set", { key: kvsKey, value: String(raw) });
+    if (onAfterSet) onAfterSet(raw);
     publishState();
-  }
+  };
+}
+
+// Register commands
+registerStringCommand("controlMode", function (v) { controlMode = v; }, null, function (v) {
+  return v === "auto" || v === "manual_on" || v === "manual_off";
+}, function () {
+  updateFiltrationState();
 });
 
-MQTT.subscribe(FILTRATION_STRATEGY_TOPIC, function (msg) {
-  if (typeof msg === "string" && (msg === "temperature_linear" || msg === "winter_circulation")) {
-    filtrationStrategy = msg;
-    Shelly.call("KVS.Set", { key: "filtrationStrategy", value: String(msg) });
-    planFiltration();
-    publishState();
-  }
+registerStringCommand("filtrationStrategy", function (v) { filtrationStrategy = v; }, "filtrationStrategy", function (v) {
+  return v === "temperature_linear" || v === "winter_circulation";
+}, function () {
+  planFiltration();
 });
 
-MQTT.subscribe("pool_filtration/replan/set", function (msg) {
-  if (msg === "ON") {
+commandHandlers.replan = function (raw) {
+  if (raw === "ON" || raw === 1 || raw === true) {
     lastError = "Manual re-planning requested";
     planFiltration();
-    MQTT.publish("pool_filtration/replan/set", "", 0, true);
   }
-});
+};
 
-registerNumberListener("pool_filtration/freeze_on/set", function (v) {
-  if (v < freezeOff) freezeOn = v;
-}, "freezeOn", function (v) {
+registerNumberCommand("freezeOn", function (v) { if (v < freezeOff) freezeOn = v; }, "freezeOn", function (v) {
   return v >= -10 && v <= 10 && v < freezeOff;
 });
 
-registerNumberListener("pool_filtration/freeze_off/set", function (v) {
-  if (v > freezeOn) freezeOff = v;
-}, "freezeOff", function (v) {
+registerNumberCommand("freezeOff", function (v) { if (v > freezeOn) freezeOff = v; }, "freezeOff", function (v) {
   return v >= -10 && v <= 10 && v > freezeOn;
 });
 
-registerNumberListener("pool_filtration/min_minutes/set", function (v) {
-  minMinutes = v;
-}, "minMinutes", function (v) {
+registerNumberCommand("minMinutes", function (v) { minMinutes = v; }, "minMinutes", function (v) {
   return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY && v <= maxMinutes;
 });
 
-registerNumberListener("pool_filtration/max_minutes/set", function (v) {
-  maxMinutes = v;
-}, "maxMinutes", function (v) {
+registerNumberCommand("maxMinutes", function (v) { maxMinutes = v; }, "maxMinutes", function (v) {
   return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY && v >= minMinutes;
 });
 
-registerNumberListener("pool_filtration/noon_minutes/set", function (v) {
-  noonMinutes = v;
-}, "noonMinutes", function (v) {
+registerNumberCommand("noonMinutes", function (v) { noonMinutes = v; }, "noonMinutes", function (v) {
   return v >= 0 && v <= 1439;
 });
 
-registerNumberListener("pool_filtration/coeff/set", function (v) {
-  filtrationCoeff = v;
-}, "filtrationCoeff", function (v) {
+registerNumberCommand("filtrationCoeff", function (v) { filtrationCoeff = v; }, "filtrationCoeff", function (v) {
   return v >= 0.5 && v <= 2;
 });
 
-registerNumberListener("pool_filtration/winter_minutes/set", function (v) {
-  winterMinutes = v;
-  planFiltration();
-}, "winterMinutes", function (v) {
+registerNumberCommand("winterMinutes", function (v) { winterMinutes = v; }, "winterMinutes", function (v) {
   return v >= MIN_MINUTES_LIMIT && v <= MINUTES_PER_DAY;
+}, function () {
+  if (filtrationStrategy === "winter_circulation") planFiltration();
 });
 
-registerNumberListener("pool_filtration/winter_center_minutes/set", function (v) {
-  winterCenterMinutes = v;
-  planFiltration();
-}, "winterCenterMinutes", function (v) {
+registerNumberCommand("winterCenterMinutes", function (v) { winterCenterMinutes = v; }, "winterCenterMinutes", function (v) {
   return v >= 0 && v <= (MINUTES_PER_DAY - 1);
+}, function () {
+  if (filtrationStrategy === "winter_circulation") planFiltration();
+});
+
+MQTT.subscribe(COMMAND_TOPIC, function (msg) {
+  try {
+    let o = JSON.parse(msg);
+    if (!o || typeof o.key !== "string") return;
+    if (commandHandlers[o.key]) commandHandlers[o.key](o.value);
+  } catch (_) {}
 });
 
 // ───── Autodiscovery for Home Assistant ─────
@@ -264,13 +265,14 @@ function autodiscovery() {
     queue.push({ path: BASE_TOPIC + "/binary_sensor/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) });
   }
 
-  function enqueueNumber(id, name, min, max, step, icon, tpl, cmd) {
+  function enqueueNumber(id, name, min, max, step, icon, tpl, cmdKey) {
     let o = {
       name: name,
       uniq_id: buildObjectId(id),
       stat_t: STATE_TOPIC,
       val_tpl: tpl,
-      cmd_t: cmd,
+      cmd_t: COMMAND_TOPIC,
+      cmd_tpl: "{\"key\":\"" + cmdKey + "\",\"value\":{{ value }}}",
       min: min,
       max: max,
       step: step,
@@ -305,14 +307,14 @@ function autodiscovery() {
   enqueueBinarySensor("frost_protection", "Frost protection", "cold", "mdi:snowflake", "{{ value_json.frostProtection }}");
 
   // Number inputs
-  enqueueNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "pool_filtration/freeze_on/set");
-  enqueueNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "pool_filtration/freeze_off/set");
-  enqueueNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "pool_filtration/min_minutes/set");
-  enqueueNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "pool_filtration/max_minutes/set");
-  enqueueNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "pool_filtration/noon_minutes/set");
-  enqueueNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "pool_filtration/coeff/set");
-  enqueueNumber("winter_minutes", "Winter minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "pool_filtration/winter_minutes/set");
-  enqueueNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "pool_filtration/winter_center_minutes/set");
+  enqueueNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "freezeOn");
+  enqueueNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "freezeOff");
+  enqueueNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "minMinutes");
+  enqueueNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "maxMinutes");
+  enqueueNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "noonMinutes");
+  enqueueNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "filtrationCoeff");
+  enqueueNumber("winter_minutes", "Winter minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "winterMinutes");
+  enqueueNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "winterCenterMinutes");
 
   // Control mode selector
   enqueueMisc(BASE_TOPIC + "/select/" + buildObjectId("control_mode") + "/config", {
@@ -320,7 +322,8 @@ function autodiscovery() {
     unique_id: buildObjectId("control_mode"),
     state_topic: STATE_TOPIC,
     value_template: "{{ value_json.controlMode }}",
-    command_topic: CONTROL_MODE_TOPIC,
+    command_topic: COMMAND_TOPIC,
+    command_template: "{\"key\":\"controlMode\",\"value\":\"{{ value }}\"}",
     options: ["auto", "manual_on", "manual_off"],
     icon: "mdi:account-switch",
     device: {
@@ -336,7 +339,8 @@ function autodiscovery() {
     unique_id: buildObjectId("filtration_strategy"),
     state_topic: STATE_TOPIC,
     value_template: "{{ value_json.filtrationStrategy }}",
-    command_topic: FILTRATION_STRATEGY_TOPIC,
+    command_topic: COMMAND_TOPIC,
+    command_template: "{\"key\":\"filtrationStrategy\",\"value\":\"{{ value }}\"}",
     options: ["temperature_linear", "winter_circulation"],
     icon: "mdi:chart-timeline-variant",
     device: {
@@ -351,8 +355,8 @@ function autodiscovery() {
   enqueueMisc(BASE_TOPIC + "/button/" + buildObjectId("replan") + "/config", {
     name: "Replan",
     unique_id: buildObjectId("replan"),
-    command_topic: "pool_filtration/replan/set",
-    payload_press: "ON",
+    command_topic: COMMAND_TOPIC,
+    payload_press: "{\"key\":\"replan\",\"value\":\"ON\"}",
     icon: "mdi:refresh",
     device: {
       identifiers: ["shelly_pool_" + mac],
