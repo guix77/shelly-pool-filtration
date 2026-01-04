@@ -61,19 +61,19 @@ All parameters can be modified via MQTT and are persisted in KVS:
 
 | Parameter | MQTT Topic | Default | Description |
 |-----------|------------|---------|-------------|
-| `freezeOn` | `pool_filtration/cmd` | 0.5°C | JSON: `{\"key\":\"freezeOn\",\"value\":<number>}` |
-| `freezeOff` | `pool_filtration/cmd` | 1.0°C | JSON: `{\"key\":\"freezeOff\",\"value\":<number>}` |
-| `minMinutes` | `pool_filtration/cmd` | 120 min | JSON: `{\"key\":\"minMinutes\",\"value\":<number>}` |
-| `maxMinutes` | `pool_filtration/cmd` | 960 min | JSON: `{\"key\":\"maxMinutes\",\"value\":<number>}` |
-| `noonMinutes` | `pool_filtration/cmd` | 825 min | JSON: `{\"key\":\"noonMinutes\",\"value\":<number>}` |
-| `filtrationCoeff` | `pool_filtration/cmd` | 1.0 | JSON: `{\"key\":\"filtrationCoeff\",\"value\":<number>}` |
-| `filtrationStrategy` | `pool_filtration/cmd` | `temperature_linear` | JSON: `{\"key\":\"filtrationStrategy\",\"value\":\"temperature_linear|winter_circulation\"}` |
-| `winterMinutes` | `pool_filtration/cmd` | 120 min | JSON: `{\"key\":\"winterMinutes\",\"value\":<number>}` |
-| `winterCenterMinutes` | `pool_filtration/cmd` | 420 min | JSON: `{\"key\":\"winterCenterMinutes\",\"value\":<number>}` |
+| `freezeOn` | `pool_filtration/freeze_on/set` | 0.5°C | Frost protection activation threshold |
+| `freezeOff` | `pool_filtration/freeze_off/set` | 1.0°C | Frost protection deactivation threshold |
+| `minMinutes` | `pool_filtration/min_minutes/set` | 120 min | Minimum daily filtration duration |
+| `maxMinutes` | `pool_filtration/max_minutes/set` | 960 min | Maximum daily filtration duration |
+| `noonMinutes` | `pool_filtration/noon_minutes/set` | 825 min | Fallback noon time (13:45) |
+| `filtrationCoeff` | `pool_filtration/coeff/set` | 1.0 | Filtration duration multiplier coefficient |
+| `filtrationStrategy` | `pool_filtration/filtration_strategy/set` | `temperature_linear` | Planning strategy (`temperature_linear` or `winter_circulation`) |
+| `winterMinutes` | `pool_filtration/winter_minutes/set` | 120 min | Winter maintenance circulation duration (used when strategy = `winter_circulation`) |
+| `winterCenterMinutes` | `pool_filtration/winter_center_minutes/set` | 420 min | Center time in minutes since midnight (default 07:00) for `winter_circulation` |
 
 ### Control mode
 
-The control mode can be changed via the `pool_filtration/cmd` topic (JSON):
+The control mode can be changed via the `pool_filtration/control_mode/set` topic:
 - `auto` : Automatic mode (scheduling + frost protection)
 - `manual_on` : Forced filtration ON
 - `manual_off` : Forced filtration OFF
@@ -260,14 +260,17 @@ Although the system adapts automatically, you can adjust parameters to optimize 
 
 ### Subscription (commands)
 
-- **`pool_filtration/cmd`** : Unified command topic (JSON payload)
-
-Examples:
-- Set mode: `{\"key\":\"controlMode\",\"value\":\"auto\"}`
-- Set strategy: `{\"key\":\"filtrationStrategy\",\"value\":\"winter_circulation\"}`
-- Set winter minutes: `{\"key\":\"winterMinutes\",\"value\":120}`
-- Set winter center: `{\"key\":\"winterCenterMinutes\",\"value\":420}`
-- Replan: `{\"key\":\"replan\",\"value\":\"ON\"}`
+- **`pool_filtration/control_mode/set`** : Change mode (`auto`, `manual_on`, `manual_off`)
+- **`pool_filtration/filtration_strategy/set`** : Change planning strategy (`temperature_linear`, `winter_circulation`)
+- **`pool_filtration/freeze_on/set`** : Set frost protection activation threshold (number)
+- **`pool_filtration/freeze_off/set`** : Set frost protection deactivation threshold (number)
+- **`pool_filtration/min_minutes/set`** : Minimum filtration duration (number)
+- **`pool_filtration/max_minutes/set`** : Maximum filtration duration (number)
+- **`pool_filtration/noon_minutes/set`** : Fallback noon time in minutes (0-1439)
+- **`pool_filtration/coeff/set`** : Filtration coefficient (number)
+- **`pool_filtration/winter_minutes/set`** : Winter maintenance duration in minutes (used when strategy = `winter_circulation`)
+- **`pool_filtration/winter_center_minutes/set`** : Winter center time in minutes since midnight (0-1439)
+- **`pool_filtration/replan/set`** : Force schedule recalculation (send `ON`)
 
 ---
 
