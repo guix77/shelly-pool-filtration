@@ -228,13 +228,12 @@ MQTT.subscribe(COMMAND_TOPIC, function (msg) {
  */
 function autodiscovery() {
   let mac = sanitizeMAC(Shelly.getDeviceInfo().mac);
-  let queue = [];
 
   function buildObjectId(id) {
     return ENTITY_PREFIX + "_" + id;
   }
 
-  function enqueueSensor(id, name, unit, dclass, icon, tpl, diagnostic) {
+  function buildSensor(id, name, unit, dclass, icon, tpl, diagnostic) {
     let o = {
       name: name,
       uniq_id: buildObjectId(id),
@@ -246,10 +245,10 @@ function autodiscovery() {
     if (dclass) o.device_class = dclass;
     if (icon) o.icon = icon;
     if (diagnostic) o.entity_category = "diagnostic";
-    queue.push({ path: BASE_TOPIC + "/sensor/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) });
+    return { path: BASE_TOPIC + "/sensor/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) };
   }
 
-  function enqueueBinarySensor(id, name, dclass, icon, tpl, diagnostic) {
+  function buildBinarySensor(id, name, dclass, icon, tpl, diagnostic) {
     let o = {
       name: name,
       uniq_id: buildObjectId(id),
@@ -262,10 +261,10 @@ function autodiscovery() {
     if (dclass) o.device_class = dclass;
     if (icon) o.icon = icon;
     if (diagnostic) o.entity_category = "diagnostic";
-    queue.push({ path: BASE_TOPIC + "/binary_sensor/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) });
+    return { path: BASE_TOPIC + "/binary_sensor/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) };
   }
 
-  function enqueueNumber(id, name, min, max, step, icon, tpl, cmdKey) {
+  function buildNumber(id, name, min, max, step, icon, tpl, cmdKey) {
     let o = {
       name: name,
       uniq_id: buildObjectId(id),
@@ -280,115 +279,107 @@ function autodiscovery() {
       entity_category: "config"
     };
     if (icon) o.icon = icon;
-    queue.push({ path: BASE_TOPIC + "/number/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) });
+    return { path: BASE_TOPIC + "/number/" + buildObjectId(id) + "/config", payload: JSON.stringify(o) };
   }
 
-  function enqueueMisc(path, obj) {
-    queue.push({ path: path, payload: JSON.stringify(obj) });
+  function buildMisc(path, obj) {
+    return { path: path, payload: JSON.stringify(obj) };
   }
 
-  // Sensors
-  enqueueSensor("water_temperature", "Water temperature", "°C", "temperature", "mdi:waves", "{{ value_json.waterTemperature }}");
-  enqueueSensor("air_temperature", "Air temperature", "°C", "temperature", "mdi:weather-sunny", "{{ value_json.airTemperature }}");
-  enqueueSensor("air_temperature_sensor", "Air temperature (Shelly sensor)", "°C", "temperature", "mdi:thermometer", "{{ value_json.airTemperatureSensor }}", true);
-  enqueueSensor("air_temperature_min", "Air temperature (freeze min)", "°C", "temperature", "mdi:snowflake-thermometer", "{{ value_json.airTemperatureMin }}", true);
-  enqueueSensor("maximum_water_temperature_today", "Max temp today", "°C", "temperature", "mdi:calendar-today", "{{ value_json.maximumWaterTemperatureToday }}");
-  enqueueSensor("maximum_temperature_yesterday", "Max temp yesterday", "°C", "temperature", "mdi:calendar-clock", "{{ value_json.maximumTemperatureYesterday }}");
-  enqueueSensor("filtration_start_time", "Start time", null, null, "mdi:clock-start", "{{ value_json.filtrationStartTime }}");
-  enqueueSensor("filtration_stop_time", "Stop time", null, null, "mdi:clock-end", "{{ value_json.filtrationStopTime }}");
-  enqueueSensor("last_planning_time", "Last planning", null, "timestamp", "mdi:calendar-range", "{{ value_json.lastPlanningTime }}", true);
-  enqueueSensor("filtration_duration", "Duration", "h", "duration", "mdi:timer", "{{ value_json.filtrationDuration }}");
-  enqueueSensor("filtration_reason", "Reason", null, null, "mdi:comment-question-outline", "{{ value_json.filtrationReason }}", true);
-  enqueueSensor("last_error", "Last error", null, null, "mdi:alert", "{{ value_json.lastError }}", true);
-  enqueueSensor("heartbeat", "Heartbeat", null, "timestamp", "mdi:heart-pulse", "{{ value_json.heartbeat }}", true);
+  function itemAt(i) {
+    switch (i) {
+      // Sensors
+      case 0:  return buildSensor("water_temperature", "Water temperature", "°C", "temperature", "mdi:waves", "{{ value_json.waterTemperature }}");
+      case 1:  return buildSensor("air_temperature", "Air temperature", "°C", "temperature", "mdi:weather-sunny", "{{ value_json.airTemperature }}");
+      case 2:  return buildSensor("air_temperature_sensor", "Air temperature (Shelly sensor)", "°C", "temperature", "mdi:thermometer", "{{ value_json.airTemperatureSensor }}", true);
+      case 3:  return buildSensor("air_temperature_min", "Air temperature (freeze min)", "°C", "temperature", "mdi:snowflake-thermometer", "{{ value_json.airTemperatureMin }}", true);
+      case 4:  return buildSensor("maximum_water_temperature_today", "Max temp today", "°C", "temperature", "mdi:calendar-today", "{{ value_json.maximumWaterTemperatureToday }}");
+      case 5:  return buildSensor("maximum_temperature_yesterday", "Max temp yesterday", "°C", "temperature", "mdi:calendar-clock", "{{ value_json.maximumTemperatureYesterday }}");
+      case 6:  return buildSensor("filtration_start_time", "Start time", null, null, "mdi:clock-start", "{{ value_json.filtrationStartTime }}");
+      case 7:  return buildSensor("filtration_stop_time", "Stop time", null, null, "mdi:clock-end", "{{ value_json.filtrationStopTime }}");
+      case 8:  return buildSensor("last_planning_time", "Last planning", null, "timestamp", "mdi:calendar-range", "{{ value_json.lastPlanningTime }}", true);
+      case 9:  return buildSensor("filtration_duration", "Duration", "h", "duration", "mdi:timer", "{{ value_json.filtrationDuration }}");
+      case 10: return buildSensor("filtration_reason", "Reason", null, null, "mdi:comment-question-outline", "{{ value_json.filtrationReason }}", true);
+      case 11: return buildSensor("last_error", "Last error", null, null, "mdi:alert", "{{ value_json.lastError }}", true);
+      case 12: return buildSensor("heartbeat", "Heartbeat", null, "timestamp", "mdi:heart-pulse", "{{ value_json.heartbeat }}", true);
 
-  // Binary sensors
-  enqueueBinarySensor("filtration_state", "Filtration state", "running", "mdi:pump", "{{ value_json.filtrationState }}");
-  enqueueBinarySensor("frost_protection", "Frost protection", "cold", "mdi:snowflake", "{{ value_json.frostProtection }}");
+      // Binary sensors
+      case 13: return buildBinarySensor("filtration_state", "Filtration state", "running", "mdi:pump", "{{ value_json.filtrationState }}");
+      case 14: return buildBinarySensor("frost_protection", "Frost protection", "cold", "mdi:snowflake", "{{ value_json.frostProtection }}");
 
-  // Number inputs
-  enqueueNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "freezeOn");
-  enqueueNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "freezeOff");
-  enqueueNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "minMinutes");
-  enqueueNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "maxMinutes");
-  enqueueNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "noonMinutes");
-  enqueueNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "filtrationCoeff");
-  enqueueNumber("winter_minutes", "Winter minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "winterMinutes");
-  enqueueNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "winterCenterMinutes");
+      // Number inputs
+      case 15: return buildNumber("freeze_on", "Freeze ON", -10, 10, 0.1, "mdi:snowflake-alert", "{{ value_json.freezeOn }}", "freezeOn");
+      case 16: return buildNumber("freeze_off", "Freeze OFF", -10, 10, 0.1, "mdi:snowflake-off", "{{ value_json.freezeOff }}", "freezeOff");
+      case 17: return buildNumber("min_minutes", "Min minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand", "{{ value_json.minMinutes }}", "minMinutes");
+      case 18: return buildNumber("max_minutes", "Max minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-sand-full", "{{ value_json.maxMinutes }}", "maxMinutes");
+      case 19: return buildNumber("noon_minutes", "Noon fallback", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock", "{{ value_json.noonMinutes }}", "noonMinutes");
+      case 20: return buildNumber("coeff", "Filtration coeff", 0.5, 2, 0.1, "mdi:lambda", "{{ value_json.filtrationCoeff }}", "filtrationCoeff");
+      case 21: return buildNumber("winter_minutes", "Winter minutes", MIN_MINUTES_LIMIT, MINUTES_PER_DAY, 10, "mdi:timer-outline", "{{ value_json.winterMinutes }}", "winterMinutes");
+      case 22: return buildNumber("winter_center_minutes", "Winter center (minutes)", 0, MINUTES_PER_DAY - 1, 1, "mdi:clock-outline", "{{ value_json.winterCenterMinutes }}", "winterCenterMinutes");
 
-  // Control mode selector
-  enqueueMisc(BASE_TOPIC + "/select/" + buildObjectId("control_mode") + "/config", {
-    name: "Control mode",
-    unique_id: buildObjectId("control_mode"),
-    state_topic: STATE_TOPIC,
-    value_template: "{{ value_json.controlMode }}",
-    command_topic: COMMAND_TOPIC,
-    command_template: "{\"key\":\"controlMode\",\"value\":\"{{ value }}\"}",
-    options: ["auto", "manual_on", "manual_off"],
-    icon: "mdi:account-switch",
-    device: {
-      identifiers: ["shelly_pool_" + mac],
-      name: DEVICE_NAME,
-      manufacturer: MANUFACTURER
+      // Control mode selector
+      case 23: return buildMisc(BASE_TOPIC + "/select/" + buildObjectId("control_mode") + "/config", {
+        name: "Control mode",
+        unique_id: buildObjectId("control_mode"),
+        state_topic: STATE_TOPIC,
+        value_template: "{{ value_json.controlMode }}",
+        command_topic: COMMAND_TOPIC,
+        command_template: "{\"key\":\"controlMode\",\"value\":\"{{ value }}\"}",
+        options: ["auto", "manual_on", "manual_off"],
+        icon: "mdi:account-switch",
+        device: { identifiers: ["shelly_pool_" + mac], name: DEVICE_NAME, manufacturer: MANUFACTURER }
+      });
+
+      // Filtration strategy selector
+      case 24: return buildMisc(BASE_TOPIC + "/select/" + buildObjectId("filtration_strategy") + "/config", {
+        name: "Filtration strategy",
+        unique_id: buildObjectId("filtration_strategy"),
+        state_topic: STATE_TOPIC,
+        value_template: "{{ value_json.filtrationStrategy }}",
+        command_topic: COMMAND_TOPIC,
+        command_template: "{\"key\":\"filtrationStrategy\",\"value\":\"{{ value }}\"}",
+        options: ["temperature_linear", "winter_circulation"],
+        icon: "mdi:chart-timeline-variant",
+        device: { identifiers: ["shelly_pool_" + mac], name: DEVICE_NAME, manufacturer: MANUFACTURER },
+        entity_category: "config"
+      });
+
+      // Replan button
+      case 25: return buildMisc(BASE_TOPIC + "/button/" + buildObjectId("replan") + "/config", {
+        name: "Replan",
+        unique_id: buildObjectId("replan"),
+        command_topic: COMMAND_TOPIC,
+        payload_press: "{\"key\":\"replan\",\"value\":\"ON\"}",
+        icon: "mdi:refresh",
+        device: { identifiers: ["shelly_pool_" + mac], name: DEVICE_NAME, manufacturer: MANUFACTURER }
+      });
+
+      // Alive (connectivity)
+      case 26: return buildMisc(BASE_TOPIC + "/binary_sensor/" + ENTITY_PREFIX + "_alive/config", {
+        name: "Alive",
+        unique_id: ENTITY_PREFIX + "_alive",
+        state_topic: "pool_filtration/alive",
+        payload_on: "ON",
+        payload_off: "OFF",
+        device_class: "connectivity",
+        expire_after: 300,
+        entity_category: "diagnostic",
+        device: {
+          identifiers: ["shelly_pool_" + sanitizeMAC(Shelly.getDeviceInfo().mac)],
+          name: DEVICE_NAME,
+          manufacturer: MANUFACTURER
+        }
+      });
     }
-  });
+    return null;
+  }
 
-  // Filtration strategy selector
-  enqueueMisc(BASE_TOPIC + "/select/" + buildObjectId("filtration_strategy") + "/config", {
-    name: "Filtration strategy",
-    unique_id: buildObjectId("filtration_strategy"),
-    state_topic: STATE_TOPIC,
-    value_template: "{{ value_json.filtrationStrategy }}",
-    command_topic: COMMAND_TOPIC,
-    command_template: "{\"key\":\"filtrationStrategy\",\"value\":\"{{ value }}\"}",
-    options: ["temperature_linear", "winter_circulation"],
-    icon: "mdi:chart-timeline-variant",
-    device: {
-      identifiers: ["shelly_pool_" + mac],
-      name: DEVICE_NAME,
-      manufacturer: MANUFACTURER
-    },
-    entity_category: "config"
-  });
-
-  // Replan button
-  enqueueMisc(BASE_TOPIC + "/button/" + buildObjectId("replan") + "/config", {
-    name: "Replan",
-    unique_id: buildObjectId("replan"),
-    command_topic: COMMAND_TOPIC,
-    payload_press: "{\"key\":\"replan\",\"value\":\"ON\"}",
-    icon: "mdi:refresh",
-    device: {
-      identifiers: ["shelly_pool_" + mac],
-      name: DEVICE_NAME,
-      manufacturer: MANUFACTURER
-    }
-  });
-
-  queue.push({
-    path: BASE_TOPIC + "/binary_sensor/" + ENTITY_PREFIX + "_alive/config",
-    payload: JSON.stringify({
-      name: "Alive",
-      unique_id: ENTITY_PREFIX + "_alive",
-      state_topic: "pool_filtration/alive",
-      payload_on: "ON",
-      payload_off: "OFF",
-      device_class: "connectivity",
-      expire_after: 300,
-      entity_category: "diagnostic",
-      device: {
-        identifiers: ["shelly_pool_" + sanitizeMAC(Shelly.getDeviceInfo().mac)],
-        name: DEVICE_NAME,
-        manufacturer: MANUFACTURER
-      }
-    })
-  });
-
-  // Publish all entities (1 per second)
+  // Publish all entities (1 per second) without storing payload strings (saves RAM)
   let i = 0;
   let timerId = Timer.set(1000, true, function () {
-    if (i < queue.length) {
-      MQTT.publish(queue[i].path, queue[i].payload, 1, true);
+    let item = itemAt(i);
+    if (item) {
+      MQTT.publish(item.path, item.payload, 1, true);
       i++;
     } else {
       Timer.clear(timerId);
